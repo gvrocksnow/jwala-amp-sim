@@ -29,13 +29,16 @@ jobs:
       matrix:
         include:
           - { name: windows-x64, os: windows-latest }
-          - { name: macos-arm64, os: macos-latest }
+          # Apple Silicon + Intel in one universal binary, cross-compiled on the arm64 runner
+          - { name: macos-universal, os: macos-latest, targets: 'aarch64-apple-darwin,x86_64-apple-darwin' }
           - { name: linux-x64,   os: ubuntu-latest }
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -52,7 +55,24 @@ jobs:
             libgl1-mesa-dev libvulkan-dev
 
       - name: Build
+        if: runner.os != 'macOS'
         run: cargo build --release --locked
+
+      - name: Build (macOS universal)
+        if: runner.os == 'macOS'
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked --target "$target"
+          done
+          # merge each arm64/x86_64 pair into one universal binary under target/release
+          mkdir -p target/release
+          for file in jwala libjwala_plugin.dylib; do
+            lipo -create \
+              "target/aarch64-apple-darwin/release/$file" \
+              "target/x86_64-apple-darwin/release/$file" \
+              -output "target/release/$file"
+          done
+          lipo -info target/release/jwala target/release/libjwala_plugin.dylib
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
