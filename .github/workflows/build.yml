@@ -1,0 +1,119 @@
+# Builds Jwala (standalone app + VST3 + CLAP) for Windows, macOS and Linux.
+# Every run uploads the packaged binaries as workflow artifacts; pushing a `v*` tag also
+# attaches them to a GitHub release.
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+    working-directory: rust
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest }
+          - { name: macos-arm64, os: macos-latest }
+          - { name: linux-x64,   os: ubuntu-latest }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libjack-jackd2-dev \
+            libx11-dev libx11-xcb-dev libxcursor-dev libxrandr-dev \
+            libxcb1-dev libxcb-icccm4-dev libxcb-dri2-0-dev \
+            libgl1-mesa-dev libvulkan-dev
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          dist=dist/Jwala-${{ matrix.name }}
+          mkdir -p "$dist/Jwala.vst3/Contents/x86_64-win"
+          cp target/release/jwala.exe "$dist/Jwala.exe"
+          cp target/release/jwala_plugin.dll "$dist/Jwala.vst3/Contents/x86_64-win/Jwala.vst3"
+          cp target/release/jwala_plugin.dll "$dist/Jwala.clap"
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          dist=dist/Jwala-${{ matrix.name }}
+          mkdir -p "$dist"
+          cp target/release/jwala "$dist/Jwala"
+          for kind in vst3 clap; do
+            bundle="$dist/Jwala.$kind/Contents"
+            mkdir -p "$bundle/MacOS"
+            cp target/release/libjwala_plugin.dylib "$bundle/MacOS/Jwala"
+            cat > "$bundle/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>Jwala</string>
+            <key>CFBundleIdentifier</key><string>com.gvrocksnow.jwala.$kind</string>
+            <key>CFBundleName</key><string>Jwala</string>
+            <key>CFBundlePackageType</key><string>BNDL</string>
+            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+          </dict>
+          </plist>
+          EOF
+            echo "BNDL????" > "$bundle/PkgInfo"
+          done
+          # ad-hoc signature so Apple Silicon hosts will load the bundles
+          codesign --force --deep --sign - "$dist/Jwala.vst3" "$dist/Jwala.clap" "$dist/Jwala"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dist=dist/Jwala-${{ matrix.name }}
+          mkdir -p "$dist/Jwala.vst3/Contents/x86_64-linux"
+          cp target/release/jwala "$dist/Jwala"
+          cp target/release/libjwala_plugin.so "$dist/Jwala.vst3/Contents/x86_64-linux/Jwala.so"
+          cp target/release/libjwala_plugin.so "$dist/Jwala.clap"
+
+      - name: Archive
+        run: |
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "Jwala-${{ matrix.name }}.zip" "Jwala-${{ matrix.name }}"
+          else
+            zip -ry "Jwala-${{ matrix.name }}.zip" "Jwala-${{ matrix.name }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jwala-${{ matrix.name }}
+          path: rust/dist/Jwala-${{ matrix.name }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rust/dist/Jwala-${{ matrix.name }}.zip
