@@ -2,6 +2,8 @@
 
 Jwala is a guitar amp simulator with a full signal chain: pedals, a tube amp, a speaker cabinet, a graphic EQ and stereo effects. It runs as a **standalone app** (ASIO / WASAPI) or as a **VST3 / CLAP plugin** in your DAW. It's written in Rust and draws its UI on the GPU.
 
+> **Fully vibecoded:** every line of Jwala, from the DSP to the GPU UI, was written with Claude Opus 5.5.
+
 ![Jwala amp page](docs/screenshots/amp.png)
 
 ## Features at a glance
