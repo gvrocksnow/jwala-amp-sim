@@ -149,10 +149,11 @@ jobs:
             zip -ry "Jwala-${{ matrix.name }}.zip" "Jwala-${{ matrix.name }}"
           fi
 
+      # upload the zip rather than the folder: artifact storage drops Unix permissions (the executable bit)
       - uses: actions/upload-artifact@v4
         with:
           name: Jwala-${{ matrix.name }}
-          path: rust/dist/Jwala-${{ matrix.name }}
+          path: rust/dist/Jwala-${{ matrix.name }}.zip
 
       - name: Attach to release
         if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/v')
