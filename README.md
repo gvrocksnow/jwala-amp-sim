@@ -167,4 +167,4 @@ Jwala.exe --render in.wav out.wav "Classic Crunch" amp.GAIN=0.7 ir=my_cab.wav
 
 ## License
 
-[GPL-3.0](LICENSE)
+Code: [GPL-3.0](LICENSE). Artwork in `assets/`: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
