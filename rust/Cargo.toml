@@ -1,0 +1,44 @@
+[package]
+name = "jwala"
+version = "0.1.0"
+edition = "2021"
+description = "Jwala amp & effects rig"
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "jwala_plugin"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "jwala"
+path = "src/main.rs"
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de42101", features = ["standalone"] }
+baseview = { git = "https://github.com/RustAudio/baseview.git", rev = "579130ecb4f9f315ae52190af42f0ea46aeaa4a2" }
+raw-window-handle = "0.5"
+rwh06 = { package = "raw-window-handle", version = "0.6" }
+wgpu = "30"
+pollster = "1"
+bytemuck = { version = "1", features = ["derive"] }
+fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rfd = "0.17"
+cpal = "0.15"
+atomic_float = "0.1"
+keyboard-types = { version = "0.6", default-features = false }
+hound = "3.5"
+winreg = "0.55"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1

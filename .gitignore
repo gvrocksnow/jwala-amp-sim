@@ -1,0 +1,41 @@
+# --- .NET build output ---
+[Bb]in/
+[Oo]bj/
+publish/
+*.user
+*.suo
+*.userprefs
+*.rsuser
+
+# The global gitignore excludes *.csproj; this project needs it
+!*.csproj
+
+# Built single-file executable (rebuild with `dotnet publish`)
+/Jwala.exe
+
+# --- IDEs / editors ---
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- Python (tools/) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- Generated test renders (regenerate with `Jwala.exe --render`) ---
+tools/renders/
+tools/out_*.wav
+tools/sine*.wav
+
+# --- OS ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- Rust port ---
+rust/target/
+rust/dist/
