@@ -17,7 +17,7 @@ Jwala is a guitar amp simulator with a full signal chain: pedals, a tube amp, a 
 - **Chromatic tuner** with strobe and adjustable A4 reference.
 - **12 factory presets**, user presets, and the last state restored on launch.
 - **Plugin parameters are host-automatable**, and the DSP runs at **4x oversampling** for the drive stages.
-- Builds for **Windows, macOS and Linux**.
+- Builds for **Windows, macOS and Linux** (the macOS and Linux builds compile in CI but haven't been tested).
 
 ## The rig
 
@@ -125,6 +125,8 @@ cargo build --release
 ```
 
 On Windows, `rust\build.ps1` builds and packages everything into `rust\dist\` (`Jwala.exe`, `Jwala.vst3`, `Jwala.clap`). On Linux, install the ALSA/JACK and X11/Vulkan development packages first (see [`.github/workflows/build.yml`](.github/workflows/build.yml) for the exact list). The **Build** GitHub Actions workflow produces Windows, macOS and Linux packages.
+
+> **Note:** The Windows build should work but still may have bugs. The macOS and Linux builds compile, but have not been tested.
 
 ### Offline rendering
 
