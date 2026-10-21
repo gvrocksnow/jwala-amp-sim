@@ -16,7 +16,7 @@ use atomic_float::AtomicF32;
 use baseview::{Event, EventStatus, MouseButton, MouseEvent, Window, WindowEvent, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 use nih_plug::prelude::*;
 use painter::{Painter, Rect};
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle, RawWindowHandle};
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -233,7 +233,8 @@ impl App {
             _ => 0,
         };
         let phys = ((size.0 as f32 * scale) as u32, (size.1 as f32 * scale) as u32);
-        let renderer = match gpu::Renderer::new(hwnd, phys, scale) {
+        let target = gpu::target(window.raw_window_handle(), window.raw_display_handle());
+        let renderer = match target.and_then(|t| gpu::Renderer::new(t, phys, scale)) {
             Ok(r) => Some(r),
             Err(e) => {
                 renderer_failed(&e);

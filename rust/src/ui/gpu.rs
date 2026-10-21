@@ -92,27 +92,59 @@ fn premul_blend() -> wgpu::BlendState {
     }
 }
 
+/// A window to draw into, in wgpu's raw-window-handle version.
+pub type Target = (rwh06::RawDisplayHandle, rwh06::RawWindowHandle);
+
+/// Converts baseview's window and display handles (raw-window-handle 0.5) to wgpu's (0.6).
+pub fn target(window: raw_window_handle::RawWindowHandle, display: raw_window_handle::RawDisplayHandle) -> Result<Target, String> {
+    use raw_window_handle::{RawDisplayHandle as D, RawWindowHandle as W};
+    use std::ptr::NonNull;
+    match (window, display) {
+        (W::Win32(w), _) => {
+            let handle = rwh06::Win32WindowHandle::new(std::num::NonZeroIsize::new(w.hwnd as isize).ok_or("null window")?);
+            Ok((rwh06::RawDisplayHandle::Windows(rwh06::WindowsDisplayHandle::new()), rwh06::RawWindowHandle::Win32(handle)))
+        }
+        (W::AppKit(w), _) => {
+            let handle = rwh06::AppKitWindowHandle::new(NonNull::new(w.ns_view).ok_or("null view")?);
+            Ok((rwh06::RawDisplayHandle::AppKit(rwh06::AppKitDisplayHandle::new()), rwh06::RawWindowHandle::AppKit(handle)))
+        }
+        (W::Xlib(w), D::Xlib(d)) => {
+            if w.window == 0 {
+                return Err("null window".into());
+            }
+            let mut handle = rwh06::XlibWindowHandle::new(w.window);
+            handle.visual_id = w.visual_id;
+            Ok((rwh06::RawDisplayHandle::Xlib(rwh06::XlibDisplayHandle::new(NonNull::new(d.display), d.screen)), rwh06::RawWindowHandle::Xlib(handle)))
+        }
+        _ => Err("unsupported window type".into()),
+    }
+}
+
 impl Renderer {
-    /// Creates a renderer drawing into the Win32 window `hwnd`, `phys` pixels big at `scale`.
+    /// Creates a renderer drawing into `target`, `phys` pixels big at `scale`.
     ///
-    /// Tries a real GPU first (DirectX 12, then Vulkan), then WARP: Windows' built-in software
+    /// Tries a real GPU first (Windows: DirectX 12, then Vulkan; macOS: Metal; Linux: Vulkan),
+    /// then a software adapter on the same API. On Windows that is WARP, its built-in software
     /// DirectX 12 rasteriser, so PCs without a usable GPU (VMs, remote sessions, basic display
     /// drivers) still get the full UI, drawn on the CPU. Driver panics during setup are caught.
-    /// `JWALA_RENDERER=software` forces WARP, `=none` simulates no renderer at all (for testing).
-    pub fn new(hwnd: isize, phys: (u32, u32), scale: f32) -> Result<Renderer, String> {
+    /// `JWALA_RENDERER=software` forces software, `=none` simulates no renderer at all (for testing).
+    pub fn new(target: Target, phys: (u32, u32), scale: f32) -> Result<Renderer, String> {
         let mode = std::env::var("JWALA_RENDERER").unwrap_or_default().to_lowercase();
         // one backend per attempt: starting Vulkan alongside DX12 costs ~0.3 s (its loader and layers)
-        let dx12 = (wgpu::Backends::DX12, false);
-        let vulkan = (wgpu::Backends::VULKAN, false);
-        let warp = (wgpu::Backends::DX12, true);
-        let attempts: &[(wgpu::Backends, bool)] = match mode.as_str() {
-            "software" => &[warp],
-            "none" => &[],
-            _ => &[dx12, vulkan, warp],
+        #[cfg(windows)]
+        let (gpus, software): (&[_], _) = (&[(wgpu::Backends::DX12, false), (wgpu::Backends::VULKAN, false)], (wgpu::Backends::DX12, true));
+        #[cfg(target_os = "macos")]
+        let (gpus, software): (&[_], _) = (&[(wgpu::Backends::METAL, false)], (wgpu::Backends::METAL, true));
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let (gpus, software): (&[_], _) = (&[(wgpu::Backends::VULKAN, false)], (wgpu::Backends::VULKAN, true));
+        let attempts: Vec<(wgpu::Backends, bool)> = match mode.as_str() {
+            "software" => vec![software],
+            "none" => vec![],
+            _ => gpus.iter().copied().chain([software]).collect(),
         };
         let mut errors = Vec::new();
-        for &(backends, software) in attempts {
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Self::try_new(hwnd, phys, scale, backends, software))) {
+        for (backends, software) in attempts {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Self::try_new(target, phys, scale, backends, software))) {
                 Ok(Ok(r)) => return Ok(r),
                 Ok(Err(e)) => errors.push(e),
                 Err(_) => errors.push("the graphics driver crashed during setup".to_string()),
@@ -121,17 +153,13 @@ impl Renderer {
         Err(if errors.is_empty() { "no renderer allowed (JWALA_RENDERER=none)".into() } else { errors.join("; ") })
     }
 
-    fn try_new(hwnd: isize, phys: (u32, u32), scale: f32, backends: wgpu::Backends, software: bool) -> Result<Renderer, String> {
+    fn try_new((display, window): Target, phys: (u32, u32), scale: f32, backends: wgpu::Backends, software: bool) -> Result<Renderer, String> {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
         desc.backends = backends;
         let instance = wgpu::Instance::new(desc);
         let surface = unsafe {
-            let handle = rwh06::Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd).ok_or("null window")?);
             instance
-                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: Some(rwh06::RawDisplayHandle::Windows(rwh06::WindowsDisplayHandle::new())),
-                    raw_window_handle: rwh06::RawWindowHandle::Win32(handle),
-                })
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle { raw_display_handle: Some(display), raw_window_handle: window })
                 .map_err(|e| e.to_string())?
         };
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
