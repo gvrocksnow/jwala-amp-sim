@@ -144,16 +144,16 @@ jobs:
         run: |
           cd dist
           if [ "$RUNNER_OS" = "Windows" ]; then
-            7z a "Jwala-${{ matrix.name }}.zip" "Jwala-${{ matrix.name }}"
+            7z a "Jwala-$JWALA_VERSION-${{ matrix.name }}.zip" "Jwala-${{ matrix.name }}"
           else
-            zip -ry "Jwala-${{ matrix.name }}.zip" "Jwala-${{ matrix.name }}"
+            zip -ry "Jwala-$JWALA_VERSION-${{ matrix.name }}.zip" "Jwala-${{ matrix.name }}"
           fi
 
       # upload the zip rather than the folder: artifact storage drops Unix permissions (the executable bit)
       - uses: actions/upload-artifact@v4
         with:
-          name: Jwala-${{ matrix.name }}
-          path: rust/dist/Jwala-${{ matrix.name }}.zip
+          name: Jwala-${{ env.JWALA_VERSION }}-${{ matrix.name }}
+          path: rust/dist/Jwala-${{ env.JWALA_VERSION }}-${{ matrix.name }}.zip
 
       - name: Attach to release
         if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/v')
@@ -161,4 +161,4 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
-          files: rust/dist/Jwala-${{ matrix.name }}.zip
+          files: rust/dist/Jwala-${{ env.JWALA_VERSION }}-${{ matrix.name }}.zip
