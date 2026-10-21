@@ -140,6 +140,10 @@ jobs:
           cp target/release/libjwala_plugin.so "$dist/Jwala.vst3/Contents/x86_64-linux/Jwala.so"
           cp target/release/libjwala_plugin.so "$dist/Jwala.clap"
 
+      # GPLv3 requires the license text to ship with the binaries
+      - name: Add license and readme
+        run: cp ../LICENSE ../README.md "dist/Jwala-${{ matrix.name }}/"
+
       - name: Archive
         run: |
           cd dist
