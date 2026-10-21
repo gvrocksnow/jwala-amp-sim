@@ -113,7 +113,25 @@ Settings and the last state are saved in `%AppData%\Jwala\jwala-rs.json`.
 
 ## Plugin
 
-Copy `Jwala.vst3` to `C:\Program Files\Common Files\VST3` and/or `Jwala.clap` to `C:\Program Files\Common Files\CLAP`, then rescan in your DAW. Every control is an automatable parameter whose ID is its preset key (`amp.GAIN`, `comp.ON`, `cab.MIC POS`, …), so presets saved in the standalone load in the plugin too.
+Copy `Jwala.vst3` and/or `Jwala.clap` to your plugin folders, then rescan in your DAW:
+
+| OS | VST3 | CLAP |
+|---|---|---|
+| Windows | `C:\Program Files\Common Files\VST3` | `C:\Program Files\Common Files\CLAP` |
+| macOS | `~/Library/Audio/Plug-Ins/VST3` | `~/Library/Audio/Plug-Ins/CLAP` |
+| Linux | `~/.vst3` | `~/.clap` |
+
+Every control is an automatable parameter whose ID is its preset key (`amp.GAIN`, `comp.ON`, `cab.MIC POS`, …), so presets saved in the standalone load in the plugin too.
+
+### macOS: removing the download quarantine
+
+The macOS build is a universal binary (Apple Silicon and Intel) but isn't signed with an Apple Developer ID or notarized, so macOS quarantines it when it's downloaded through a browser. The standalone then shows "can't be opened" or "is damaged", and some DAWs (Logic in particular) won't load or list the plugins. Clear the quarantine once after installing:
+
+```bash
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Jwala.vst3 ~/Library/Audio/Plug-Ins/CLAP/Jwala.clap
+```
+
+For the standalone, run `xattr -dr com.apple.quarantine` on the unzipped `Jwala` too, or right-click it and choose **Open** once.
 
 ## Building from source
 
