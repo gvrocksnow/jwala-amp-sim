@@ -1,13 +1,9 @@
 # Builds Jwala (standalone app + VST3 + CLAP) for Windows, macOS and Linux.
-# Every run uploads the packaged binaries as workflow artifacts; pushing a `v*` tag also
-# attaches them to a GitHub release.
+# Runs only when started by hand (Actions → Build → Run workflow). Every run uploads the packaged
+# binaries as workflow artifacts; running it on a `v*` tag also attaches them to a GitHub release.
 name: Build
 
 on:
-  push:
-    branches: [master]
-    tags: ["v*"]
-  pull_request:
   workflow_dispatch:
 
 permissions:
