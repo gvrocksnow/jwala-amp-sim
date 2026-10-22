@@ -202,15 +202,11 @@ sealed class PedalPage : WidgetSurface
         }
     }
 
-    /// <summary>The enclosure: chrome ports cut from the concept, placed where they sit on it (fractions of a
+    /// <summary>The enclosure: side chrome ports cut from the concept, placed where they sit on it (fractions of a
     /// small pedal's width) and butting up against the pastel body drawn over them.</summary>
     static void PaintEnclosure(Graphics g, Effect e, RectangleF b)
     {
         float u = Unit(b);
-        var top = Assets.Image("port_top.png");
-        float tw = u * 0.17f, th = tw * top.Height / top.Width;
-        g.DrawImage(top, b.X + u * 0.16f, b.Y - th + 1, tw, th);
-        g.DrawImage(top, b.Right - u * 0.15f - tw, b.Y - th + 1, tw, th);
         float py = b.Y + b.Height * 0.44f;
         var left = Assets.Image("port_left.png");
         float lw = u * 0.069f, lph = lw * left.Height / left.Width;
