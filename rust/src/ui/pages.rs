@@ -810,22 +810,38 @@ fn amp_page(app: &mut App, p: &mut Painter, r: Rect) {
 
 // ===================================================================== cab page
 
-// Speaker centres and cone radius as fractions of cab_412.png, and the mic's head centre and tail (where the stand
-// clamps on) as fractions of cab_mic.png (measured by tools/cut_cab.py on concepts/cab412_A2mic_1_clone.png).
-const CAB_SPK: [(f32, f32); 4] = [(0.2691, 0.2993), (0.7241, 0.2993), (0.2669, 0.7122), (0.7218, 0.7122)];
-const CAB_SPK_R: f32 = 0.1363;
-/// The miked speaker: top right, as in the concept.
-const CAB_MIC_SPK: usize = 1;
+/// One cabinet graphic per speaker model, all cut from the same 4x12 render (tools/cut_cab.py) so they share one
+/// pixel scale: the miked speaker's centre is in cab_412.png pixels of that image.
+struct CabArt {
+    img: &'static str,
+    spk: (f32, f32),
+}
+/// 4x12 V30, 2x12 Alnico, 1x12 Open, USER IR (shown as the 4x12). The miked speaker is the top right one where
+/// there are two columns, as in the concept.
+const CAB_ART: [CabArt; 4] = [
+    CabArt { img: "cab_412.png", spk: (964.0, 391.0) },
+    CabArt { img: "cab_212.png", spk: (964.0, 391.0) },
+    CabArt { img: "cab_112.png", spk: (358.0, 391.0) },
+    CabArt { img: "cab_412.png", spk: (964.0, 391.0) },
+];
+/// Cone radius in those pixels, and the 4x12's width (which sets the scale).
+const CAB_SPK_R: f32 = 181.6;
+const CAB_412_W: f32 = 1332.0;
+// The mic's head centre and tail (where the stand clamps on) as fractions of cab_mic.png (measured by
+// tools/cut_cab.py on concepts/cab412_A2mic_1_clone.png).
 const MIC_HEAD: (f32, f32) = (0.19, 0.5);
 const MIC_TAIL: (f32, f32) = (0.97, 0.55);
-/// Mic width relative to the cab at DISTANCE 0, as in the concept.
+/// Mic width relative to the 4x12 at DISTANCE 0, as in the concept.
 const MIC_W: f32 = 0.195;
 
 struct CabLayout {
+    /// Where the 4x12 would stand: it sets the scale, and the smaller cabs stand centred on the same floor in it.
+    slot: Rect,
     bx: Rect,
     panel: Rect,
     spk: (f32, f32),
     spk_r: f32,
+    img: &'static str,
 }
 
 fn cab_layout(app: &App, r: Rect) -> CabLayout {
@@ -838,13 +854,19 @@ fn cab_layout(app: &App, r: Rect) -> CabLayout {
     let w = h * cw0 / ch0;
     let total = w + gap + pw;
     let (x0, y0) = (r.x + (r.w - total) / 2.0, r.y + 96.0);
-    let bx = Rect::new(x0, y0, w, h);
-    let (fx, fy) = CAB_SPK[CAB_MIC_SPK];
+    let slot = Rect::new(x0, y0, w, h);
+    let art = &CAB_ART[app.params.cab_model.value().clamp(0, 3) as usize];
+    let k = w / CAB_412_W;
+    let (aw, ah) = app.tex_size(art.img);
+    let (bw, bh) = (aw * k, ah * k);
+    let bx = Rect::new(slot.cx() - bw / 2.0, slot.bottom() - bh, bw, bh);
     CabLayout {
+        slot,
         bx,
-        panel: Rect::new(bx.right() + gap, y0, pw, h),
-        spk: (bx.x + w * fx, bx.y + h * fy),
-        spk_r: w * CAB_SPK_R,
+        panel: Rect::new(slot.right() + gap, y0, pw, h),
+        spk: (bx.x + art.spk.0 * k, bx.y + art.spk.1 * k),
+        spk_r: CAB_SPK_R * k,
+        img: art.img,
     }
 }
 
@@ -858,7 +880,7 @@ pub fn mic_value(app: &App, x: f32) -> Option<f32> {
 /// The mic image for the current MIC POS and DISTANCE: the head on the speaker, further mics drawn smaller.
 fn mic_rect(app: &App, l: &CabLayout, pos: f32, dist: f32) -> Rect {
     let (mw0, mh0) = app.tex_size("cab_mic.png");
-    let mw = l.bx.w * MIC_W * (1.0 - 0.22 * dist);
+    let mw = l.slot.w * MIC_W * (1.0 - 0.22 * dist);
     let mh = mw * mh0 / mw0;
     let head = (l.spk.0 - pos * l.spk_r * 0.92, l.spk.1);
     Rect::new(head.0 - mw * MIC_HEAD.0, head.1 - mh * MIC_HEAD.1, mw, mh)
@@ -867,9 +889,10 @@ fn mic_rect(app: &App, l: &CabLayout, pos: f32, dist: f32) -> Rect {
 /// Boom from the mic's tail down to a knuckle right of the cab, then the pole and tripod on the floor.
 fn mic_stand(op: &mut Painter, l: &CabLayout, mic: Rect, shadow: bool) {
     let tail = (mic.x + mic.w * MIC_TAIL.0, mic.y + mic.h * MIC_TAIL.1);
-    let s = l.bx.w / 666.0;
-    let knuckle = (l.bx.right() + 56.0 * s, l.spk.1 + 210.0 * s);
+    let s = l.slot.w / 666.0;
     let floor = l.bx.bottom() + 6.0 * s;
+    // on the shorter cabs the knuckle stays well above the floor
+    let knuckle = (l.bx.right() + 56.0 * s, (l.spk.1 + 210.0 * s).min(floor - 90.0 * s));
     let pole = (knuckle.0, floor - 16.0 * s);
     let (dark, lit) = if shadow { ([0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]) } else { (rgb(20, 20, 23), rgba(255, 255, 255, 34)) };
     let legs = [(-56.0, 14.0), (50.0, 18.0), (6.0, 8.0)];
@@ -892,16 +915,17 @@ fn mic_stand(op: &mut Painter, l: &CabLayout, mic: Rect, shadow: bool) {
 fn cab_page(app: &mut App, p: &mut Painter, r: Rect) {
     let l = cab_layout(app, r);
     let (bx, panel) = (l.bx, l.panel);
+    let model = app.params.cab_model.value().clamp(0, 3) as u64;
     p.fill(r, SLATE);
     p.text(Font::Semibold, 15.0, "CABINET", 30.0, r.y + 20.0, rgb(240, 242, 245));
     p.text(Font::Regular, 9.0, "Speaker model, mic and room — drag the mic across the speaker (dust cap to cone), or load your own IR", 33.0, r.y + 52.0, rgba(205, 210, 220, 150));
 
     // GPU soft shadows like the amp page: the cab on the slate, then the mic and its stand on the cab
-    let u = bx.w / 1.6;
-    let cab_t = app.tex("cab_412.png");
+    let u = l.slot.w / 1.6;
+    let cab_t = app.tex(l.img);
     p.shadow(
         4,
-        layout_key(r, 11),
+        layout_key(r, 11 + (model << 4)),
         [
             ShadowTerm { dx: u * 0.012, dy: u * 0.006, blur: u * 0.01, strength: 0.6 },
             ShadowTerm { dx: u * 0.07, dy: u * 0.035, blur: u * 0.05, strength: 0.5 },
@@ -917,7 +941,7 @@ fn cab_page(app: &mut App, p: &mut Painter, r: Rect) {
     let mic = mic_rect(app, &l, pos, dist);
     let mic_t = app.tex("cab_mic.png");
     let md = mic.h;
-    let mic_key = layout_key(r, 12) ^ ((pos * 4096.0) as u64) << 1 ^ ((dist * 4096.0) as u64) << 14;
+    let mic_key = layout_key(r, 12 + (model << 4)) ^ ((pos * 4096.0) as u64) << 1 ^ ((dist * 4096.0) as u64) << 14;
     p.shadow(
         5,
         mic_key,
@@ -939,7 +963,7 @@ fn cab_page(app: &mut App, p: &mut Painter, r: Rect) {
         p.ellipse_stroke(head, 2.0, with_alpha(GOLD, 180));
     }
     let lbl = format!("MIC  {} · {}", (spec::CAB_KNOBS[0].fmt)(pos), (spec::CAB_KNOBS[1].fmt)(dist));
-    p.text_in(Font::Bold, 8.5, &lbl, Rect::new(bx.x, bx.bottom() + 40.0, bx.w, 20.0), 0.5, 0.5, GOLD);
+    p.text_in(Font::Bold, 8.5, &lbl, Rect::new(l.slot.x, bx.bottom() + 40.0, l.slot.w, 20.0), 0.5, 0.5, GOLD);
     // grab the mic itself, or anywhere along the speaker's row
     app.hits.push((mic, Hit::Mic));
     app.hits.push((Rect::new(l.spk.0 - l.spk_r, l.spk.1 - mic.h / 2.0 - 10.0, l.spk_r * 1.3, mic.h + 20.0), Hit::Mic));
