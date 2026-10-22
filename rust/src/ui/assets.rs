@@ -14,6 +14,7 @@ static FILES: &[(&str, &[u8])] = assets![
     "jewel.png", "knob.png", "pedal_knob.png",
     "amp_head.png", "amp_cab.png", "amp_knob.png", "amp_led_green.png", "amp_led_red.png", "amp_led_off.png",
     "cab_412.png", "cab_212.png", "cab_112.png", "cab_mic.png",
+    "eq_panel.png",
     "led_glow.png", "port_left.png", "port_right.png",
     "pastel_comp.png", "pastel_od.png", "pastel_dist.png", "pastel_fuzz.png", "pastel_doubler.png",
     "pastel_chorus.png", "pastel_phaser.png", "pastel_delay.png", "pastel_reverb.png",

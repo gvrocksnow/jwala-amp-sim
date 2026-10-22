@@ -1013,6 +1013,13 @@ fn cab_page(app: &mut App, p: &mut Painter, r: Rect) {
 
 // ===================================================================== graphic EQ page
 
+/// The rack unit (eq_panel.png, cut from concepts/eq_AR_3_level.png by tools/cut_eq.py): width / height.
+const EQ_ASPECT: f32 = 2.3309;
+/// Inside the display's bezel, as fractions of the panel: x0, y0, x1, y1.
+const EQ_GLASS: [f32; 4] = [0.0729, 0.1020, 0.9263, 0.4472];
+/// The rows of values above the sliders and names below them, down the panel's height.
+const EQ_VALUE_Y: f32 = 0.462;
+const EQ_NAME_Y: f32 = 0.925;
 /// Height of an EQ slider's thumb.
 pub const FADER_THUMB_H: f32 = 20.0;
 /// The response display spans ±this many dB.
@@ -1020,45 +1027,59 @@ const EQ_VIEW_DB: f32 = 18.0;
 
 fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
     const AMBER: Color = [255.0 / 255.0, 186.0 / 255.0, 84.0 / 255.0, 1.0];
-    p.cover(app.tex("backdrop.jpg"), r);
-    p.fill(r, rgba(0, 0, 0, 140));
-    vignette(p, r, 200);
+    const CORE: Color = [255.0 / 255.0, 224.0 / 255.0, 170.0 / 255.0, 1.0];
+    p.fill(r, SLATE);
     p.text(Font::Semibold, 15.0, "GRAPHIC EQ", 30.0, r.y + 20.0, rgb(240, 242, 245));
     p.text(Font::Regular, 9.0, "Nine octave bands after the cab, before the post effects — drag a slider (double-click = 0 dB, wheel = fine steps)", 33.0, r.y + 52.0, rgba(205, 210, 220, 150));
 
     let on = app.params.eq_on.value();
     let vals: Vec<f32> = app.params.eq.iter().map(|k| k.value()).collect();
 
-    // the rack unit
-    let uw = (r.w - 120.0).min(1080.0);
-    let uh = (r.h - 130.0).min(560.0);
-    let unit = Rect::new(r.x + (r.w - uw) / 2.0, r.y + 84.0 + ((r.h - 114.0 - uh) / 2.0).max(0.0), uw, uh);
-    box_shadow(p, unit, 12.0, 150, 6.0, 10.0);
-    p.grad(unit, 12.0, rgba(40, 36, 32, 240), rgba(18, 16, 14, 240));
-    p.rrect_stroke(unit, 12.0, 1.0, with_alpha(GOLD, 90));
-    p.text(Font::Bold, 14.0, "GRAPHIC EQ", unit.x + 22.0, unit.y + 18.0, GOLD);
-    p.text(Font::Bold, 7.5, "9-BAND  ·  ±12 dB  ·  POST CAB", unit.x + 24.0, unit.y + 44.0, DIM);
-    switch(app, p, Rect::new(unit.right() - 106.0, unit.y + 20.0, 84.0, 28.0), "EQ ON", Hit::EqOn, on, rgb(255, 150, 50));
-    button(app, p, Rect::new(unit.right() - 182.0, unit.y + 20.0, 64.0, 28.0), "FLAT", Hit::EqFlat, false, 8.0);
+    // the rack unit, as large as fits under the title
+    let (top, bottom) = (r.y + 84.0, r.bottom() - 30.0);
+    let mut uw = (r.w - 120.0).min(1300.0);
+    if uw / EQ_ASPECT > bottom - top {
+        uw = (bottom - top) * EQ_ASPECT;
+    }
+    let uh = uw / EQ_ASPECT;
+    let unit = Rect::new(r.x + (r.w - uw) / 2.0, top + ((bottom - top - uh) / 2.0).max(0.0), uw, uh);
+    let px = |f: f32| unit.x + f * uw;
+    let py = |f: f32| unit.y + f * uh;
+    let panel_t = app.tex("eq_panel.png");
+    let u = uw / 1.6;
+    p.shadow(
+        4,
+        layout_key(r, 40),
+        [
+            ShadowTerm { dx: u * 0.008, dy: u * 0.012, blur: u * 0.01, strength: 0.6 },
+            ShadowTerm { dx: u * 0.03, dy: u * 0.05, blur: u * 0.05, strength: 0.45 },
+            ShadowTerm { dx: u * 0.06, dy: u * 0.1, blur: u * 0.14, strength: 0.35 },
+        ],
+        |op| op.image(panel_t, unit),
+        None,
+    );
+    p.image(panel_t, unit);
 
-    // response display: log frequency 20 Hz–20 kHz, ±18 dB
-    let scr = Rect::new(unit.x + 22.0, unit.y + 66.0, unit.w - 44.0, (uh * 0.3).max(110.0));
-    p.rrect(scr, 6.0, rgb(10, 11, 11));
-    p.rrect_stroke(scr, 6.0, 1.0, with_alpha(GOLD, 60));
+    // EQ ON and FLAT, top right above the unit
+    switch(app, p, Rect::new(unit.right() - 84.0, r.y + 22.0, 84.0, 28.0), "EQ ON", Hit::EqOn, on, rgb(255, 150, 50));
+    button(app, p, Rect::new(unit.right() - 160.0, r.y + 22.0, 64.0, 28.0), "FLAT", Hit::EqFlat, false, 8.0);
+
+    // response display on the glass: log frequency 20 Hz–20 kHz, ±18 dB
+    let scr = Rect::new(px(EQ_GLASS[0]), py(EQ_GLASS[1]), (EQ_GLASS[2] - EQ_GLASS[0]) * uw, (EQ_GLASS[3] - EQ_GLASS[1]) * uh);
     let fx = |f: f64| scr.x + scr.w * ((f / 20.0).ln() / 1000f64.ln()) as f32;
-    let dy = |d: f64| scr.cy() - (d as f32 / EQ_VIEW_DB) * (scr.h / 2.0 - 6.0);
+    let dy = |d: f64| scr.cy() - (d as f32 / EQ_VIEW_DB) * (scr.h / 2.0 - 8.0);
     for d in [-12.0, -6.0, 0.0, 6.0, 12.0] {
         let y = dy(d);
-        p.fill(Rect::new(scr.x + 1.0, y, scr.w - 2.0, 1.0), rgba(255, 255, 255, if d == 0.0 { 46 } else { 16 }));
+        p.fill(Rect::new(scr.x + 4.0, y, scr.w - 8.0, 1.0), rgba(255, 255, 255, if d == 0.0 { 36 } else { 12 }));
         let lbl = if d == 0.0 { "0".to_string() } else { format!("{:+}", d) };
-        p.text_in(Font::Regular, 6.5, &lbl, Rect::new(scr.x + 4.0, y - 10.0, 30.0, 10.0), 0.0, 1.0, rgba(255, 255, 255, 70));
+        p.text_in(Font::Regular, 6.5, &lbl, Rect::new(scr.x + 8.0, y - 10.0, 30.0, 10.0), 0.0, 1.0, rgba(255, 255, 255, 60));
     }
     for (i, f) in spec::EQ_FREQS.iter().enumerate() {
         let x = fx(*f);
-        p.fill(Rect::new(x, scr.y + 1.0, 1.0, scr.h - 2.0), rgba(255, 255, 255, 14));
-        p.text_in(Font::Regular, 6.5, spec::EQ_KNOBS[i].name, Rect::new(x - 20.0, scr.bottom() - 14.0, 40.0, 12.0), 0.5, 0.5, rgba(255, 255, 255, 70));
+        p.fill(Rect::new(x, scr.y + 4.0, 1.0, scr.h - 8.0), rgba(255, 255, 255, 10));
+        p.text_in(Font::Regular, 6.5, spec::EQ_KNOBS[i].name, Rect::new(x - 20.0, scr.bottom() - 16.0, 40.0, 12.0), 0.5, 0.5, rgba(255, 255, 255, 60));
     }
-    p.push_clip(scr.inflate(-1.0, -1.0));
+    p.push_clip(scr.inflate(-3.0, -3.0));
     // at the running rate, so the top band's squeeze towards Nyquist shows as it sounds
     let fs = app.shared.sample_rate.load(Ordering::Relaxed) as f64;
     let fs = if fs > 0.0 { fs } else { 48000.0 };
@@ -1069,12 +1090,12 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
             (fx(f), dy(crate::dsp::eq::response_db(&vals, fs, f.min(0.499 * fs)).clamp(-40.0, 40.0)))
         })
         .collect();
-    let c = if on { AMBER } else { with_alpha(DIM, 150) };
-    for w in pts.windows(2) {
-        if on {
-            p.line(w[0].0, w[0].1, w[1].0, w[1].1, 7.0, with_alpha(AMBER, 34));
+    // a soft amber glow round a pale core, like the concept's display
+    let passes: &[(f32, Color)] = if on { &[(14.0, with_alpha(AMBER, 18)), (6.0, with_alpha(AMBER, 60)), (2.2, CORE)] } else { &[(2.0, with_alpha(DIM, 150))] };
+    for &(w, c) in passes {
+        for s in pts.windows(2) {
+            p.line(s[0].0, s[0].1, s[1].0, s[1].1, w, c);
         }
-        p.line(w[0].0, w[0].1, w[1].0, w[1].1, 2.0, c);
     }
     p.pop_clip();
     if !on {
@@ -1082,17 +1103,16 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
     }
 
     // sliders: nine bands, a gap, then LEVEL
-    let top = scr.bottom() + 26.0;
-    let bottom = unit.bottom() - 22.0;
-    let (y0, y1) = (top + 24.0, bottom - 26.0);
-    let left = unit.x + 64.0;
-    let slots = spec::EQ_KNOBS.len() as f32 + 0.6;
-    let sw = (unit.right() - 22.0 - left) / slots;
+    let (left, right) = (unit.x + 64.0, unit.right() - 22.0);
+    let sw = (right - left) / (spec::EQ_KNOBS.len() as f32 + 0.6);
+    // the thumb's centre travels from just under the values to just over the names
+    let (vy, ny) = (py(EQ_VALUE_Y), py(EQ_NAME_Y));
+    let (y0, y1) = (vy + 28.0, ny - 12.0);
     let ty = |v: f32| y1 - v * (y1 - y0);
     for d in [-12.0f32, -6.0, 0.0, 6.0, 12.0] {
         let y = ty(0.5 + d / (2.0 * spec::EQ_RANGE_DB as f32));
         let lbl = if d == 0.0 { "0 dB".to_string() } else { format!("{:+}", d) };
-        p.text_in(Font::ArialBold, 6.5, &lbl, Rect::new(unit.x + 18.0, y - 6.0, 38.0, 12.0), 1.0, 0.5, DIM);
+        p.text_in(Font::ArialBold, 6.5, &lbl, Rect::new(left - 46.0, y - 6.0, 38.0, 12.0), 1.0, 0.5, DIM);
     }
     let fader_hot = |app: &App, k: Knob| hot(app, Hit::Fader(k)) || pressed(app, Hit::Fader(k));
     for i in 0..spec::EQ_KNOBS.len() {
@@ -1126,11 +1146,11 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
         p.grad(thumb, 4.0, rgb(214, 208, 196), rgb(108, 102, 94));
         p.rrect_stroke(thumb, 4.0, 1.0, if fader_hot(app, k) { GOLD } else { rgba(0, 0, 0, 160) });
         p.fill(Rect::new(thumb.x + 4.0, thumb.cy() - 1.0, tw - 8.0, 2.0), if on { rgb(40, 30, 20) } else { rgb(70, 66, 60) });
-        // value above, name below
+        // value above the slot, name below
         let val = (spec::EQ_KNOBS[i].fmt)(v);
-        p.text_in(Font::Bold, 7.5, &val, Rect::new(cx - sw / 2.0, top - 4.0, sw, 14.0), 0.5, 0.5, if fader_hot(app, k) { GOLD } else { TEXT });
+        p.text_in(Font::Bold, 7.5, &val, Rect::new(cx - sw / 2.0, vy, sw, 14.0), 0.5, 0.5, if fader_hot(app, k) { GOLD } else { TEXT });
         let name = if level { "LEVEL".to_string() } else { format!("{} Hz", spec::EQ_KNOBS[i].name.replace('K', "k")) };
-        p.text_in(Font::ArialBold, 7.0, &name, Rect::new(cx - sw / 2.0, bottom - 14.0, sw, 14.0), 0.5, 0.5, if level { GOLD } else { DIM });
+        p.text_in(Font::ArialBold, 7.0, &name, Rect::new(cx - sw / 2.0, ny, sw, 12.0), 0.5, 0.5, if level { GOLD } else { DIM });
         app.hits.push((Rect::new(cx - sw / 2.0, y0 - th / 2.0 - 2.0, sw, y1 - y0 + th + 4.0), Hit::Fader(k)));
         app.fader_tracks.push((k, Rect::new(cx - 1.0, y0, 2.0, y1 - y0)));
     }

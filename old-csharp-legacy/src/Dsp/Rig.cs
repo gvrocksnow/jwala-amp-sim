@@ -23,6 +23,7 @@ public sealed class RigModel
 {
     public readonly AmpParams Amp = new();
     public readonly CabParams Cab = new();
+    public readonly EqParams Eq = new();
     public readonly Tuner Tuner = new();
     public readonly SampleEffect[] Pre = { new Compressor(), new Overdrive(), new Distortion(), new Fuzz() };
     public readonly StereoEffect[] Post = { new Doubler(), new Chorus(), new Phaser(), new Delay(), new Reverb() };
@@ -38,6 +39,8 @@ public sealed class RigModel
         d["amp.DECAY"] = Amp.Decay ? 1 : 0; d["amp.ATTACK"] = Amp.Attack ? 1 : 0; d["amp.DYNAMIC"] = Amp.Dynamic ? 1 : 0;
         d["cab.ON"] = Cab.Enabled ? 1 : 0; d["cab.MODEL"] = Cab.Model;
         foreach (var p in Cab.Knobs) d["cab." + p.Name] = p.Value;
+        d["eq.ON"] = Eq.Enabled ? 1 : 0;
+        foreach (var p in Eq.Knobs) d["eq." + p.Name] = p.Value;
         foreach (var e in AllEffects)
         {
             d[e.Id + ".ON"] = e.Enabled ? 1 : 0;
@@ -57,6 +60,8 @@ public sealed class RigModel
         Cab.Enabled = Get("cab.ON", 1) > 0.5f;
         int m = (int)Get("cab.MODEL", 0); Cab.Model = m == 3 && Cab.IrData == null ? 0 : m;
         foreach (var p in Cab.Knobs) p.Value = Get("cab." + p.Name, p.Default);
+        Eq.Enabled = Get("eq.ON", 0) > 0.5f;
+        foreach (var p in Eq.Knobs) p.Value = Get("eq." + p.Name, p.Default);
         foreach (var e in AllEffects)
         {
             e.Enabled = Get(e.Id + ".ON", 0) > 0.5f;
@@ -65,7 +70,7 @@ public sealed class RigModel
     }
 }
 
-/// <summary>The running signal chain at one sample rate: gate → stomps → amp → cab → stereo FX.</summary>
+/// <summary>The running signal chain at one sample rate: gate → stomps → amp → cab → graphic EQ → stereo FX.</summary>
 public sealed class Rig
 {
     public readonly double SampleRate;
@@ -74,6 +79,7 @@ public sealed class Rig
 
     readonly AmpEngine amp;
     readonly Convolver cab = new();
+    readonly GraphicEq eq;
     int cabModel = -1; float[] cabIr;
     Biquad micShelf, micLp, proximity, lowCut, highCut;
     readonly DelayLine room;
@@ -89,7 +95,8 @@ public sealed class Rig
         var os = Array.FindAll(m.Pre, e => e.Slot == EffectSlot.Oversampled);
         amp = new AmpEngine(fs, m.Amp, os);
         foreach (var e in m.Post) e.Prepare(fs);
-        room = new DelayLine((int)(fs * 0.02));
+        eq = new GraphicEq(fs, m.Eq);
+        room =new DelayLine((int)(fs * 0.02));
         inHp.SetLowPass(fs, 25); outDcL.SetLowPass(fs, 10); outDcR.SetLowPass(fs, 10);
         gateDet = 1 - Math.Exp(-1 / (fs * 0.04));
         gateAtk = 1 - Math.Exp(-1 / (fs * 0.0008));
@@ -200,6 +207,7 @@ public sealed class Rig
         // the acoustic channel is a stereo pair of mics; its side skips the cab's mic and room
         var side = amp.AcousticSide(n);
         for (int i = 0; i < side.Length; i++) { l[i] += side[i]; r[i] -= side[i]; }
+        eq.Process(l, r);
         foreach (var e in M.Post) e.Process(l, r);
 
         float pl = 0, pr = 0;

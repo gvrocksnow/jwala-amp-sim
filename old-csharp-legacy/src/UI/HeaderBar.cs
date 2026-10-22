@@ -8,7 +8,7 @@ namespace Jwala.UI;
 
 /// <summary>
 /// Top bar: logo, preset browser, global input/gate/output, meters, power and settings;
-/// below it the signal-chain navigation (Pedals → Amp → Cab → Effects).
+/// below it the signal-chain navigation (Pedals → Amp → Cab → EQ → Effects).
 /// </summary>
 sealed class HeaderBar : WidgetSurface
 {
@@ -27,7 +27,7 @@ sealed class HeaderBar : WidgetSurface
     public event Action<int> PageSelected;
     RectangleF meterIn, meterL, meterR, statusRect;
 
-    static readonly string[] Pages = { "PEDALS", "AMP", "CAB", "EFFECTS" };
+    static readonly string[] Pages = { "PEDALS", "AMP", "CAB", "EQ", "EFFECTS" };
 
     public HeaderBar(RigModel m) { this.m = m; Height = (int)MathF.Round((Row1 + Row2) * UiScale); BackColor = Color.FromArgb(16, 14, 12); }
 
@@ -75,8 +75,8 @@ sealed class HeaderBar : WidgetSurface
 
 
         // ---- row 2: signal chain navigation
-        float tw = 168, gap = 34, total = tw * 4 + gap * 3, tx = (r.Width - total) / 2;
-        for (int i = 0; i < 4; i++)
+        float tw = 140, gap = 30, total = tw * Pages.Length + gap * (Pages.Length - 1), tx = (r.Width - total) / 2;
+        for (int i = 0; i < Pages.Length; i++)
         {
             int idx = i;
             var b = new RectangleF(tx + i * (tw + gap), Row1 + 6, tw, Row2 - 12);
@@ -98,10 +98,29 @@ sealed class HeaderBar : WidgetSurface
         // mini chain status under the label
         using var sf = new Font("Segoe UI", 7f, FontStyle.Bold);
         var sub = new RectangleF(b.X, b.Y + b.Height / 2, b.Width, b.Height / 2 - 2);
-        if (idx == 0 || idx == 3)
+        if (idx == 3 && m.Eq.Enabled)
+        {
+            // the slider positions in miniature
+            const float bw = 7;
+            float start = b.X + (b.Width - bw * EqParams.Bands) / 2, mid = sub.Y + sub.Height / 2, half = sub.Height / 2 - 3;
+            using (var axis = new SolidBrush(Color.FromArgb(50, 255, 255, 255))) g.FillRectangle(axis, start, mid - 0.5f, bw * EqParams.Bands, 1);
+            using var bar = new SolidBrush(Color.FromArgb(220, 255, 120, 40));
+            for (int i = 0; i < EqParams.Bands; i++)
+            {
+                float d = (m.Eq.Knobs[i].Value - 0.5f) * 2 * half;
+                using var bp = Gfx.Round(new RectangleF(start + i * bw + 1.5f, mid - Math.Max(d, 0), bw - 3, Math.Max(Math.Abs(d), 1.5f)), 1);
+                g.FillPath(bar, bp);
+            }
+        }
+        else if (idx == 3)
+        {
+            using var sb = new SolidBrush(Gfx.Dim);
+            g.DrawString("BYPASSED", sf, sb, sub, Gfx.CenterNoWrap);
+        }
+        else if (idx == 0 || idx == 4)
         {
             Effect[] fx = idx == 0 ? m.Pre : m.Post;
-            float dw = 30, start = b.X + (b.Width - dw * fx.Length) / 2;
+            float dw = Math.Min((b.Width - 12) / fx.Length, 30), start = b.X + (b.Width - dw * fx.Length) / 2;
             for (int i = 0; i < fx.Length; i++)
             {
                 var d = new RectangleF(start + i * dw + 3, sub.Y + 3, dw - 6, sub.Height - 6);

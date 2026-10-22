@@ -17,6 +17,18 @@ public struct Biquad
 
     public void Reset() => z1 = z2 = 0;
 
+    /// <summary>Takes another biquad's coefficients and keeps this one's state.</summary>
+    public void CopyCoefs(in Biquad o) { b0 = o.b0; b1 = o.b1; b2 = o.b2; a1 = o.a1; a2 = o.a2; }
+
+    /// <summary>Gain in dB at <paramref name="f"/> Hz (for drawing response curves).</summary>
+    public readonly double MagnitudeDb(double fs, double f)
+    {
+        double w = 2 * Math.PI * f / fs, c1 = Math.Cos(w), s1 = Math.Sin(w), c2 = Math.Cos(2 * w), s2 = Math.Sin(2 * w);
+        double nr = b0 + b1 * c1 + b2 * c2, ni = -(b1 * s1 + b2 * s2);
+        double dr = 1 + a1 * c1 + a2 * c2, di = -(a1 * s1 + a2 * s2);
+        return 10 * Math.Log10(Math.Max((nr * nr + ni * ni) / Math.Max(dr * dr + di * di, 1e-30), 1e-30));
+    }
+
     void Set(double nb0, double nb1, double nb2, double na0, double na1, double na2)
     {
         b0 = nb0 / na0; b1 = nb1 / na0; b2 = nb2 / na0; a1 = na1 / na0; a2 = na2 / na0;

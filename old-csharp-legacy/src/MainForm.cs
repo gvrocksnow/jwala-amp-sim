@@ -109,11 +109,13 @@ public sealed class MainForm : Form
         header.ToggleTuner += () => SetTuner(!model.Tuner.Active);
         var amp = new AmpPanel(model) { PowerOn = () => host.Running };
         var cabPage = new CabPage(model);
+        var eqPage = new EqPage(model.Eq) { Engine = () => host.Engine };
         pages = new WidgetSurface[]
         {
             new PedalPage(model.Pre, "PRE-AMP PEDALS", "Dynamics and drive in front of the amp — click a footswitch to engage, drag knobs (Shift = fine, double-click = reset)"),
             amp,
             cabPage,
+            eqPage,
             new PedalPage(model.Post, "POST EFFECTS", "Stereo doubler, modulation, delay and reverb after the cab — delay and reverb tails ring out when switched off"),
         };
         foreach (var p in pages) { p.Dock = DockStyle.Fill; p.Visible = false; p.ParamsChanged += _ => OnParamsChanged(); content.Controls.Add(p); }
@@ -133,7 +135,7 @@ public sealed class MainForm : Form
         content.Controls.Add(tuner);
         Controls.Add(content);
         Controls.Add(header);
-        ShowPage(Math.Clamp(s.Page, 0, 3));
+        ShowPage(Math.Clamp(s.Page, 0, pages.Length - 1));
 
         var timer = new System.Windows.Forms.Timer { Interval = 33 };
         timer.Tick += (_, _) => { header.Tick(); if (tuner.Visible) tuner.Tick(); else pages[header.Page].Tick(); };
@@ -145,7 +147,7 @@ public sealed class MainForm : Form
             if (e.KeyCode == Keys.Space) { TogglePower(); e.Handled = true; }
             else if (e.KeyCode == Keys.T) { SetTuner(!model.Tuner.Active); e.Handled = true; }
             else if (e.KeyCode == Keys.Escape && model.Tuner.Active) { SetTuner(false); e.Handled = true; }
-            else if (e.KeyCode >= Keys.D1 && e.KeyCode <= Keys.D4) { ShowPage(e.KeyCode - Keys.D1); e.Handled = true; }
+            else if (e.KeyCode >= Keys.D1 && e.KeyCode <= Keys.D5) { ShowPage(e.KeyCode - Keys.D1); e.Handled = true; }
             else if (e.KeyCode == Keys.Left && e.Control) StepPreset(-1);
             else if (e.KeyCode == Keys.Right && e.Control) StepPreset(1);
         };
@@ -155,7 +157,7 @@ public sealed class MainForm : Form
 
     public void OpenTunerForScreenshot() => SetTuner(true);
 
-    public void ShowPage(string name) => ShowPage(name.ToLowerInvariant() switch { "pedals" => 0, "amp" => 1, "cab" => 2, "effects" => 3, _ => 1 });
+    public void ShowPage(string name) => ShowPage(name.ToLowerInvariant() switch { "pedals" => 0, "amp" => 1, "cab" => 2, "eq" => 3, "effects" => 4, _ => 1 });
 
     /// <summary>Opens/closes the tuner overlay; output is muted while it's open (if enabled there).</summary>
     void SetTuner(bool on)
