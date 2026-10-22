@@ -6,31 +6,46 @@ using Jwala.Dsp;
 
 namespace Jwala.UI;
 
-/// <summary>Cab page: speaker with a draggable mic, cab model selection, IR loader and mic EQ.</summary>
+/// <summary>Cab page: 4x12 with a draggable mic on a stand, cab model selection, IR loader and mic EQ.</summary>
 sealed class CabPage : WidgetSurface
 {
+    static readonly Color Slate = Color.FromArgb(42, 45, 50);
+
+    // Speaker centres and cone radius as fractions of cab_412.png, and the mic's head centre and tail (where the stand
+    // clamps on) as fractions of cab_mic.png (measured by tools/cut_cab.py on concepts/cab412_A2mic_1_clone.png).
+    static readonly PointF[] Spk = { new(0.2691f, 0.2993f), new(0.7241f, 0.2993f), new(0.2669f, 0.7122f), new(0.7218f, 0.7122f) };
+    const float SpkR = 0.1363f;
+    const int MicSpk = 1;                                 // the miked speaker: top right, as in the concept
+    static readonly PointF MicHead = new(0.19f, 0.5f), MicTail = new(0.97f, 0.55f);
+    const float MicW = 0.195f;                            // mic width relative to the cab at DISTANCE 0
+
     readonly RigModel m;
     Rectangle box, panel;
     PointF spk; float spkR;
+    RectangleF micRect;
+    Bitmap micShadow; Size micShadowFor;
     public event Action CabChanged, LoadIrRequested;
 
     public CabPage(RigModel m)
     {
-        this.m = m; BackColor = Color.Black;
-        ParamsChanged += _ => InvalidateArea(Rectangle.Inflate(box, 90, 90)); // mic size/position follow the knobs
+        this.m = m; BackColor = Slate;
+        ParamsChanged += _ => InvalidateArea(W.Count > 0 ? W[0].Dirty : RectangleF.Empty);   // mic size/position follow the knobs
     }
 
     protected override void Arrange(Rectangle r)
     {
-        int size = Math.Min(r.Height - 70, (int)(r.Width * 0.5));
-        int pw = 380, total = size + 50 + pw;
-        int x0 = r.X + (r.Width - total) / 2, y0 = r.Y + (r.Height - size) / 2;
-        box = new Rectangle(x0, y0, size, size);
-        panel = new Rectangle(box.Right + 50, y0, pw, size);
-        spk = new PointF(box.X + size / 2f, box.Y + size / 2f);
-        spkR = size * 0.38f;
+        var cabImg = Assets.Image("cab_412.png");
+        // room for the title above, the stand's feet and the mic readout below, and the stand between cab and panel
+        int pw = 380, gap = 150;
+        int h = Math.Max(300, Math.Min(r.Height - 170, (int)((r.Width - pw - gap - 80) * (float)cabImg.Height / cabImg.Width)));
+        int w = (int)(h * (float)cabImg.Width / cabImg.Height);
+        int x0 = r.X + (r.Width - (w + gap + pw)) / 2, y0 = r.Y + 96;
+        box = new Rectangle(x0, y0, w, h);
+        panel = new Rectangle(box.Right + gap, y0, pw, h);
+        spk = new PointF(box.X + w * Spk[MicSpk].X, box.Y + h * Spk[MicSpk].Y);
+        spkR = w * SpkR;
 
-        // the mic: drag across the speaker from the dust cap (centre) to the cone edge
+        // the mic: drag across the speaker from the dust cap (centre) towards the middle of the cab (cone)
         W.Add(new CustomWidget
         {
             OnPaint = (g, b, hot, pressed) => PaintMic(g, hot || pressed),
@@ -82,62 +97,124 @@ sealed class CabPage : WidgetSurface
 
     void MoveMic(float x)
     {
-        m.Cab.MicPos.Value = Math.Clamp((x - spk.X) / (spkR * 0.92f), 0, 1);
-        InvalidateArea(RectangleF.Inflate(new RectangleF(spk.X - spkR, spk.Y - spkR, spkR * 2, spkR * 2), 60, 60));
+        var before = W[0].Dirty;
+        m.Cab.MicPos.Value = Math.Clamp((spk.X - x) / (spkR * 0.92f), 0, 1);
         UpdateMicBounds();
+        InvalidateArea(RectangleF.Union(before, W[0].Dirty));
     }
 
-    float MicSize => spkR * (0.42f - 0.16f * m.Cab.Distance.Value);
-
+    /// <summary>The mic image for the current MIC POS and DISTANCE: the head on the speaker, further mics drawn smaller.</summary>
     void UpdateMicBounds()
     {
+        var img = Assets.Image("cab_mic.png");
+        float mw = box.Width * MicW * (1 - 0.22f * m.Cab.Distance.Value), mh = mw * img.Height / img.Width;
+        var head = new PointF(spk.X - m.Cab.MicPos.Value * spkR * 0.92f, spk.Y);
+        micRect = new RectangleF(head.X - mw * MicHead.X, head.Y - mh * MicHead.Y, mw, mh);
+
+        // the widget covers the mic, its stand and the readout so a move repaints all of them
         var mic = (CustomWidget)W[0];
-        float ms = MicSize, mx = spk.X + m.Cab.MicPos.Value * spkR * 0.92f;
-        mic.Bounds = new RectangleF(mx - ms / 2, spk.Y - ms / 2, ms, ms);
-        mic.Hit = RectangleF.Inflate(new RectangleF(spk.X - spkR, spk.Y - ms / 2, spkR * 2, ms), 0, 10);
+        float s = box.Width / 666f;
+        var reach = RectangleF.FromLTRB(box.X, micRect.Top, box.Right + 120 * s, box.Bottom + 60);
+        mic.Bounds = RectangleF.Union(micRect, reach);
+        // grab the mic itself, or anywhere along the speaker's row
+        mic.Hit = RectangleF.Union(micRect, new RectangleF(spk.X - spkR, spk.Y - mh / 2 - 10, spkR * 1.3f, mh + 20));
+    }
+
+    /// <summary>Boom from the mic's tail down to a knuckle right of the cab, then the pole and tripod on the floor.</summary>
+    void PaintStand(Graphics g, RectangleF mic)
+    {
+        float s = box.Width / 666f;
+        var tail = new PointF(mic.X + mic.Width * MicTail.X, mic.Y + mic.Height * MicTail.Y);
+        var knuckle = new PointF(box.Right + 56 * s, spk.Y + 210 * s);
+        float floor = box.Bottom + 6 * s;
+        var pole = new PointF(knuckle.X, floor - 16 * s);
+        (float dx, float dy)[] legs = { (-56, 14), (50, 18), (6, 8) };
+
+        // soft shadow first, down and to the right like the cab's
+        using (var sh = new Pen(Color.FromArgb(70, 0, 0, 0), 9 * s) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+        {
+            float ox = 8 * s, oy = 10 * s;
+            g.DrawLine(sh, tail.X + ox, tail.Y + oy, knuckle.X + ox, knuckle.Y + oy);
+            g.DrawLine(sh, knuckle.X + ox, knuckle.Y + oy, pole.X + ox, pole.Y + oy);
+        }
+        var dark = Color.FromArgb(20, 20, 23);
+        using (var legPen = new Pen(dark, 5 * s) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            foreach (var (dx, dy) in legs) g.DrawLine(legPen, pole.X, pole.Y, pole.X + dx * s, floor + dy * s);
+        using (var polePen = new Pen(dark, 7 * s) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(polePen, knuckle, pole);
+        using (var boom = new Pen(dark, 6 * s) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(boom, tail, knuckle);
+        using (var lit = new Pen(Color.FromArgb(34, 255, 255, 255), 1.5f * s))
+        {
+            g.DrawLine(lit, knuckle.X - 2 * s, knuckle.Y, pole.X - 2 * s, pole.Y);
+            g.DrawLine(lit, tail.X, tail.Y - 2 * s, knuckle.X, knuckle.Y - 2 * s);
+        }
+        using (var db = new SolidBrush(dark))
+        {
+            g.FillEllipse(db, knuckle.X - 8 * s, knuckle.Y - 8 * s, 16 * s, 16 * s);
+            g.FillEllipse(db, tail.X - 5.5f * s, tail.Y - 5.5f * s, 11 * s, 11 * s);
+        }
+        using (var hl = new SolidBrush(Color.FromArgb(40, 255, 255, 255))) g.FillEllipse(hl, knuckle.X - 5 * s, knuckle.Y - 5 * s, 6 * s, 6 * s);
+    }
+
+    /// <summary>The mic's soft shadow, baked once per mic size with the same CPU shadow pass as the page backgrounds.</summary>
+    Bitmap MicShadow(Size size, out int pad)
+    {
+        pad = (int)(size.Height * 1.2f);
+        if (micShadow != null && micShadowFor == size) return micShadow;
+        micShadow?.Dispose();
+        var full = new Size(size.Width + 2 * pad, size.Height + 2 * pad);
+        micShadow = new Bitmap(full.Width, full.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        int p = pad; float md = size.Height;
+        using (var g = Graphics.FromImage(micShadow))
+            SoftShadows.Cast(g, full, og => og.DrawImage(Assets.Image("cab_mic.png"), new Rectangle(p, p, size.Width, size.Height)), null, new[]
+            {
+                new SoftShadows.Term(md * 0.06f, md * 0.1f, md * 0.05f, 0.6f),
+                new SoftShadows.Term(md * 0.2f, md * 0.3f, md * 0.16f, 0.45f),
+                new SoftShadows.Term(md * 0.4f, md * 0.6f, md * 0.4f, 0.3f),
+            }, 1);
+        micShadowFor = size;
+        return micShadow;
     }
 
     void PaintMic(Graphics g, bool hot)
     {
         UpdateMicBounds();
-        var b = W[0].Bounds;
-        // stand arm coming in from the lower right
-        var armEnd = new PointF(box.Right - 6, box.Bottom - 6);
-        using (var arm = new Pen(Color.FromArgb(90, 0, 0, 0), b.Width * 0.16f + 4) { EndCap = LineCap.Round })
-            g.DrawLine(arm, b.X + b.Width / 2 + 5, b.Y + b.Height / 2 + 8, armEnd.X + 5, armEnd.Y + 8);
-        using (var arm = new LinearGradientBrush(new PointF(b.X, b.Y), armEnd, Color.FromArgb(60, 60, 64), Color.FromArgb(18, 18, 20)))
-        using (var armPen = new Pen(arm, b.Width * 0.16f) { EndCap = LineCap.Round })
-            g.DrawLine(armPen, b.X + b.Width / 2, b.Y + b.Height / 2, armEnd.X, armEnd.Y);
-        using (var sh = new SolidBrush(Color.FromArgb(120, 0, 0, 0))) g.FillEllipse(sh, b.X + 6, b.Y + 10, b.Width, b.Height);
-        g.DrawImage(Assets.Image("mic.png"), b);
-        if (hot) using (var pen = new Pen(Color.FromArgb(180, Gfx.Gold), 2)) g.DrawEllipse(pen, RectangleF.Inflate(b, 4, 4));
+        var mic = micRect;
+        PaintStand(g, mic);
+        var shadow = MicShadow(Size.Round(mic.Size), out int pad);
+        g.DrawImage(shadow, mic.X - pad, mic.Y - pad, shadow.Width, shadow.Height);
+        g.DrawImage(Assets.Image("cab_mic.png"), mic);
+        if (hot)
+        {
+            float d = mic.Height * 1.05f;
+            using var pen = new Pen(Color.FromArgb(180, Gfx.Gold), 2);
+            g.DrawEllipse(pen, mic.X + mic.Width * MicHead.X - d / 2, mic.Y + mic.Height * MicHead.Y - d / 2, d, d);
+        }
         using var f = new Font("Segoe UI", 8.5f, FontStyle.Bold);
         using var tb = new SolidBrush(Gfx.Gold);
-        g.DrawString(m.Cab.MicPos.Display + " · " + m.Cab.Distance.Display, f, tb, new RectangleF(box.X, box.Bottom - 30, box.Width, 20), Gfx.Center);
+        g.DrawString("MIC  " + m.Cab.MicPos.Display + " · " + m.Cab.Distance.Display, f, tb, new RectangleF(box.X, box.Bottom + 40, box.Width, 20), Gfx.Center);
     }
 
     protected override void PaintStatic(Graphics g)
     {
         var r = View;
-        Gfx.Cover(g, Assets.Image("backdrop.jpg"), r);
-        using (var dark = new SolidBrush(Color.FromArgb(140, 0, 0, 0))) g.FillRectangle(dark, r);
-        Gfx.Vignette(g, r, 200);
+        using (var bg = new SolidBrush(Slate)) g.FillRectangle(bg, r);
+        using (var tf = new Font("Segoe UI Semibold", 15f))
+        using (var tb = new SolidBrush(Color.FromArgb(240, 242, 245)))
+            g.DrawString("CABINET", tf, tb, 30, 20, Gfx.Typo);
+        using (var sf0 = new Font("Segoe UI", 9f))
+        using (var sb = new SolidBrush(Color.FromArgb(150, 205, 210, 220)))
+            g.DrawString("Speaker model, mic and room — drag the mic across the speaker (dust cap to cone), or load your own IR", sf0, sb, 33, 52, Gfx.Typo);
 
-        // cabinet with the grille cloth removed so the speaker is visible
-        Gfx.Shadow(g, box, 16, 170);
-        using (var path = Gfx.Round(box, 16))
+        // soft shadow like the amp page, then the 4x12 (grille cloth off)
+        var cabImg = Assets.Image("cab_412.png");
+        float u = box.Width / 1.6f;
+        SoftShadows.Cast(g, r.Size, og => og.DrawImage(cabImg, box), null, new[]
         {
-            var st = g.Save(); g.SetClip(path);
-            Gfx.Tile(g, Assets.Image("tolex.jpg"), box, 0.5f);
-            g.Restore(st);
-        }
-        var baffle = Rectangle.Inflate(box, -28, -28);
-        using (var bb = new LinearGradientBrush(baffle, Color.FromArgb(28, 26, 24), Color.FromArgb(10, 9, 8), 90f)) g.FillRectangle(bb, baffle);
-        using (var pen = new Pen(Gfx.Gold, 2)) g.DrawRectangle(pen, baffle);
-        var sr = new RectangleF(spk.X - spkR * 1.12f, spk.Y - spkR * 1.12f, spkR * 2.24f, spkR * 2.24f);
-        using (var sh = new SolidBrush(Color.FromArgb(160, 0, 0, 0))) g.FillEllipse(sh, RectangleF.Inflate(sr, 6, 6));
-        g.DrawImage(Assets.Image("speaker.png"), sr);
-        Gfx.Logo(g, new RectangleF(baffle.X + 10, baffle.Y + 4, 260, 44), 16, StringAlignment.Near);
+            new SoftShadows.Term(u * 0.012f, u * 0.006f, u * 0.01f, 0.6f),
+            new SoftShadows.Term(u * 0.07f, u * 0.035f, u * 0.05f, 0.5f),
+            new SoftShadows.Term(u * 0.16f, u * 0.08f, u * 0.16f, 0.4f),
+        });
+        g.DrawImage(cabImg, box);
 
         // control panel
         Gfx.Shadow(g, panel, 12, 140);
@@ -147,9 +224,9 @@ sealed class CabPage : WidgetSurface
             g.FillPath(pb, pp);
             using var pen = new Pen(Color.FromArgb(90, Gfx.Gold), 1); g.DrawPath(pen, pp);
         }
-        using var tf = new Font("Segoe UI", 14f, FontStyle.Bold);
+        using var tf2 = new Font("Segoe UI", 14f, FontStyle.Bold);
         using var gold = new SolidBrush(Gfx.Gold);
-        g.DrawString("CABINET", tf, gold, panel.X + 18, panel.Y + 20, Gfx.Typo);
+        g.DrawString("CABINET", tf2, gold, panel.X + 18, panel.Y + 20, Gfx.Typo);
         using var sf = new Font("Segoe UI", 8f, FontStyle.Bold);
         using var dim = new SolidBrush(Gfx.Dim);
         g.DrawString("SPEAKER MODEL", sf, dim, panel.X + 22, panel.Y + 64, Gfx.Typo);

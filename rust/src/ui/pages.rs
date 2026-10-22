@@ -810,6 +810,17 @@ fn amp_page(app: &mut App, p: &mut Painter, r: Rect) {
 
 // ===================================================================== cab page
 
+// Speaker centres and cone radius as fractions of cab_412.png, and the mic's head centre and tail (where the stand
+// clamps on) as fractions of cab_mic.png (measured by tools/cut_cab.py on concepts/cab412_A2mic_1_clone.png).
+const CAB_SPK: [(f32, f32); 4] = [(0.2691, 0.2993), (0.7241, 0.2993), (0.2669, 0.7122), (0.7218, 0.7122)];
+const CAB_SPK_R: f32 = 0.1363;
+/// The miked speaker: top right, as in the concept.
+const CAB_MIC_SPK: usize = 1;
+const MIC_HEAD: (f32, f32) = (0.19, 0.5);
+const MIC_TAIL: (f32, f32) = (0.97, 0.55);
+/// Mic width relative to the cab at DISTANCE 0, as in the concept.
+const MIC_W: f32 = 0.195;
+
 struct CabLayout {
     bx: Rect,
     panel: Rect,
@@ -817,56 +828,121 @@ struct CabLayout {
     spk_r: f32,
 }
 
-fn cab_layout(r: Rect) -> CabLayout {
-    let size = (r.h - 70.0).min(r.w * 0.5);
+fn cab_layout(app: &App, r: Rect) -> CabLayout {
+    let (cw0, ch0) = app.tex_size("cab_412.png");
     let pw = 380.0;
-    let total = size + 50.0 + pw;
-    let (x0, y0) = (r.x + (r.w - total) / 2.0, r.y + (r.h - size) / 2.0);
-    let bx = Rect::new(x0, y0, size, size);
-    CabLayout { bx, panel: Rect::new(bx.right() + 50.0, y0, pw, size), spk: (bx.cx(), bx.cy()), spk_r: size * 0.38 }
+    // room for the title above and the mic stand's feet and the mic readout below
+    // and room between the cab and the panel for the mic stand
+    let gap = 150.0;
+    let h = (r.h - 170.0).min((r.w - pw - gap - 80.0) * ch0 / cw0).max(300.0);
+    let w = h * cw0 / ch0;
+    let total = w + gap + pw;
+    let (x0, y0) = (r.x + (r.w - total) / 2.0, r.y + 96.0);
+    let bx = Rect::new(x0, y0, w, h);
+    let (fx, fy) = CAB_SPK[CAB_MIC_SPK];
+    CabLayout {
+        bx,
+        panel: Rect::new(bx.right() + gap, y0, pw, h),
+        spk: (bx.x + w * fx, bx.y + h * fy),
+        spk_r: w * CAB_SPK_R,
+    }
 }
 
-/// Mic position for a drag to `x` (cap at the centre, cone towards the edge).
+/// Mic position for a drag to `x`: the dust cap at the speaker's centre, the cone towards the middle of the cab.
 pub fn mic_value(app: &App, x: f32) -> Option<f32> {
     let (w, h) = app.size();
-    let l = cab_layout(Rect::new(0.0, HEADER, w, h - HEADER));
-    Some(((x - l.spk.0) / (l.spk_r * 0.92)).clamp(0.0, 1.0))
+    let l = cab_layout(app, Rect::new(0.0, HEADER, w, h - HEADER));
+    Some(((l.spk.0 - x) / (l.spk_r * 0.92)).clamp(0.0, 1.0))
+}
+
+/// The mic image for the current MIC POS and DISTANCE: the head on the speaker, further mics drawn smaller.
+fn mic_rect(app: &App, l: &CabLayout, pos: f32, dist: f32) -> Rect {
+    let (mw0, mh0) = app.tex_size("cab_mic.png");
+    let mw = l.bx.w * MIC_W * (1.0 - 0.22 * dist);
+    let mh = mw * mh0 / mw0;
+    let head = (l.spk.0 - pos * l.spk_r * 0.92, l.spk.1);
+    Rect::new(head.0 - mw * MIC_HEAD.0, head.1 - mh * MIC_HEAD.1, mw, mh)
+}
+
+/// Boom from the mic's tail down to a knuckle right of the cab, then the pole and tripod on the floor.
+fn mic_stand(op: &mut Painter, l: &CabLayout, mic: Rect, shadow: bool) {
+    let tail = (mic.x + mic.w * MIC_TAIL.0, mic.y + mic.h * MIC_TAIL.1);
+    let s = l.bx.w / 666.0;
+    let knuckle = (l.bx.right() + 56.0 * s, l.spk.1 + 210.0 * s);
+    let floor = l.bx.bottom() + 6.0 * s;
+    let pole = (knuckle.0, floor - 16.0 * s);
+    let (dark, lit) = if shadow { ([0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]) } else { (rgb(20, 20, 23), rgba(255, 255, 255, 34)) };
+    let legs = [(-56.0, 14.0), (50.0, 18.0), (6.0, 8.0)];
+    for (dx, dy) in legs {
+        op.line(pole.0, pole.1, pole.0 + dx * s, floor + dy * s, 5.0 * s, dark);
+    }
+    op.line(knuckle.0, knuckle.1, pole.0, pole.1, 7.0 * s, dark);
+    op.line(tail.0, tail.1, knuckle.0, knuckle.1, 6.0 * s, dark);
+    if !shadow {
+        op.line(knuckle.0 - 2.0 * s, knuckle.1, pole.0 - 2.0 * s, pole.1, 1.5 * s, lit);
+        op.line(tail.0, tail.1 - 2.0 * s, knuckle.0, knuckle.1 - 2.0 * s, 1.5 * s, lit);
+    }
+    op.ellipse(Rect::centered(knuckle.0, knuckle.1, 16.0 * s, 16.0 * s), dark);
+    op.ellipse(Rect::centered(tail.0, tail.1, 11.0 * s, 11.0 * s), dark);
+    if !shadow {
+        op.ellipse(Rect::centered(knuckle.0 - 2.0 * s, knuckle.1 - 2.0 * s, 6.0 * s, 6.0 * s), rgba(255, 255, 255, 40));
+    }
 }
 
 fn cab_page(app: &mut App, p: &mut Painter, r: Rect) {
-    let l = cab_layout(r);
+    let l = cab_layout(app, r);
     let (bx, panel) = (l.bx, l.panel);
-    p.cover(app.tex("backdrop.jpg"), r);
-    p.fill(r, rgba(0, 0, 0, 140));
-    vignette(p, r, 200);
+    p.fill(r, SLATE);
+    p.text(Font::Semibold, 15.0, "CABINET", 30.0, r.y + 20.0, rgb(240, 242, 245));
+    p.text(Font::Regular, 9.0, "Speaker model, mic and room — drag the mic across the speaker (dust cap to cone), or load your own IR", 33.0, r.y + 52.0, rgba(205, 210, 220, 150));
 
-    // cabinet with the grille cloth removed so the speaker is visible
-    box_shadow(p, bx, 16.0, 170, 6.0, 10.0);
-    p.tile(app.tex("tolex.jpg"), bx, 0.5, 16.0);
-    let baffle = bx.inflate(-28.0, -28.0);
-    p.grad(baffle, 0.0, rgb(28, 26, 24), rgb(10, 9, 8));
-    p.rrect_stroke(baffle, 0.0, 2.0, GOLD);
-    let sr = Rect::centered(l.spk.0, l.spk.1, l.spk_r * 2.24, l.spk_r * 2.24);
-    p.ellipse(sr.inflate(6.0, 6.0), rgba(0, 0, 0, 160));
-    p.image(app.tex("speaker.png"), sr);
-    p.logo(Rect::new(baffle.x + 10.0, baffle.y + 4.0, 260.0, 44.0), 16.0, 0.0);
+    // GPU soft shadows like the amp page: the cab on the slate, then the mic and its stand on the cab
+    let u = bx.w / 1.6;
+    let cab_t = app.tex("cab_412.png");
+    p.shadow(
+        4,
+        layout_key(r, 11),
+        [
+            ShadowTerm { dx: u * 0.012, dy: u * 0.006, blur: u * 0.01, strength: 0.6 },
+            ShadowTerm { dx: u * 0.07, dy: u * 0.035, blur: u * 0.05, strength: 0.5 },
+            ShadowTerm { dx: u * 0.16, dy: u * 0.08, blur: u * 0.16, strength: 0.4 },
+        ],
+        |op| op.image(cab_t, bx),
+        None,
+    );
+    p.image(cab_t, bx);
 
-    // the mic: drag across the speaker from the dust cap (centre) to the cone edge
+    // the mic: drag across the speaker from the dust cap (centre) to the cone
     let (pos, dist) = (app.params.cab[0].value(), app.params.cab[1].value());
-    let ms = l.spk_r * (0.42 - 0.16 * dist);
-    let mx = l.spk.0 + pos * l.spk_r * 0.92;
-    let mic = Rect::centered(mx, l.spk.1, ms, ms);
-    let arm_end = (bx.right() - 6.0, bx.bottom() - 6.0);
-    p.line(mic.cx() + 5.0, mic.cy() + 8.0, arm_end.0 + 5.0, arm_end.1 + 8.0, ms * 0.16 + 4.0, rgba(0, 0, 0, 90));
-    p.line(mic.cx(), mic.cy(), arm_end.0, arm_end.1, ms * 0.16, rgb(40, 40, 44));
-    p.ellipse(Rect::new(mic.x + 6.0, mic.y + 10.0, mic.w, mic.h), rgba(0, 0, 0, 120));
-    p.image(app.tex("mic.png"), mic);
+    let mic = mic_rect(app, &l, pos, dist);
+    let mic_t = app.tex("cab_mic.png");
+    let md = mic.h;
+    let mic_key = layout_key(r, 12) ^ ((pos * 4096.0) as u64) << 1 ^ ((dist * 4096.0) as u64) << 14;
+    p.shadow(
+        5,
+        mic_key,
+        [
+            ShadowTerm { dx: md * 0.06, dy: md * 0.1, blur: md * 0.05, strength: 0.6 },
+            ShadowTerm { dx: md * 0.2, dy: md * 0.3, blur: md * 0.16, strength: 0.45 },
+            ShadowTerm { dx: md * 0.4, dy: md * 0.6, blur: md * 0.4, strength: 0.3 },
+        ],
+        |op| {
+            mic_stand(op, &l, mic, true);
+            op.image(mic_t, mic);
+        },
+        None,
+    );
+    mic_stand(p, &l, mic, false);
+    p.image(mic_t, mic);
     if hot(app, Hit::Mic) || pressed(app, Hit::Mic) {
-        p.ellipse_stroke(mic.inflate(4.0, 4.0), 2.0, with_alpha(GOLD, 180));
+        let head = Rect::centered(mic.x + mic.w * MIC_HEAD.0, mic.y + mic.h * MIC_HEAD.1, mic.h * 1.05, mic.h * 1.05);
+        p.ellipse_stroke(head, 2.0, with_alpha(GOLD, 180));
     }
-    let lbl = format!("{} · {}", (spec::CAB_KNOBS[0].fmt)(pos), (spec::CAB_KNOBS[1].fmt)(dist));
-    p.text_in(Font::Bold, 8.5, &lbl, Rect::new(bx.x, bx.bottom() - 30.0, bx.w, 20.0), 0.5, 0.5, GOLD);
-    app.hits.push((Rect::new(l.spk.0 - l.spk_r, l.spk.1 - ms / 2.0 - 10.0, l.spk_r * 2.0, ms + 20.0), Hit::Mic));
+    let lbl = format!("MIC  {} · {}", (spec::CAB_KNOBS[0].fmt)(pos), (spec::CAB_KNOBS[1].fmt)(dist));
+    p.text_in(Font::Bold, 8.5, &lbl, Rect::new(bx.x, bx.bottom() + 40.0, bx.w, 20.0), 0.5, 0.5, GOLD);
+    // grab the mic itself, or anywhere along the speaker's row
+    app.hits.push((mic, Hit::Mic));
+    app.hits.push((Rect::new(l.spk.0 - l.spk_r, l.spk.1 - mic.h / 2.0 - 10.0, l.spk_r * 1.3, mic.h + 20.0), Hit::Mic));
 
     // control panel
     box_shadow(p, panel, 12.0, 140, 6.0, 10.0);
