@@ -377,15 +377,11 @@ fn pedal_layout(specs: &[EffectSpec], area: Rect) -> PedalLayout {
     PedalLayout { bodies, scale: s, divider_y: y + base_h * s + 30.0 * s }
 }
 
-/// The enclosure: chrome ports cut from the concept, then the pastel body over them.
+/// The enclosure: side chrome ports cut from the concept, then the pastel body over them.
 fn enclosure(app: &App, p: &mut Painter, sp: &EffectSpec, b: Rect) {
     let u = unit(b);
-    let (top, left, right) = (app.tex("port_top.png"), app.tex("port_left.png"), app.tex("port_right.png"));
+    let (left, right) = (app.tex("port_left.png"), app.tex("port_right.png"));
     let sz = |t: TexId| p.tex_sizes[t.0];
-    let (tw0, th0) = sz(top);
-    let (tw, th) = (u * 0.17, u * 0.17 * th0 as f32 / tw0 as f32);
-    p.image(top, Rect::new(b.x + u * 0.16, b.y - th + 1.0, tw, th));
-    p.image(top, Rect::new(b.right() - u * 0.15 - tw, b.y - th + 1.0, tw, th));
     let py = b.y + b.h * 0.44;
     let (lw0, lh0) = sz(left);
     let (lw, lh) = (u * 0.069, u * 0.069 * lh0 as f32 / lw0 as f32);
