@@ -71,8 +71,8 @@ impl Default for TubeParams {
         TubeParams {
             globals: spec::GLOBALS.iter().map(|p| knob("Global", p)).collect(),
             amp: spec::AMP_KNOBS.iter().map(|p| knob("Amp", p)).collect(),
-            channel: IntParam::new("Amp Channel", 1, IntRange::Linear { min: 0, max: 3 })
-                .with_value_to_string(Arc::new(|v| spec::CHANNELS[v.clamp(0, 3) as usize].to_string())),
+            channel: IntParam::new("Amp Channel", 1, IntRange::Linear { min: 0, max: 4 })
+                .with_value_to_string(Arc::new(|v| spec::CHANNELS[v.clamp(0, 4) as usize].to_string())),
             bright: BoolParam::new("Amp Bright", false),
             decay: BoolParam::new("Amp Decay", false),
             attack: BoolParam::new("Amp Attack", false),

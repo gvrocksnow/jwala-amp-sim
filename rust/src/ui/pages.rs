@@ -276,7 +276,7 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
             }
         } else {
             let s = if i == 1 {
-                let ch = spec::CHANNELS[app.params.channel.value().clamp(0, 3) as usize];
+                let ch = spec::CHANNELS[app.params.channel.value().clamp(0, 4) as usize];
                 if app.params.bright.value() { format!("{ch} · BRIGHT") } else { ch.to_string() }
             } else if !app.params.cab_on.value() {
                 "BYPASSED".to_string()
@@ -624,9 +624,11 @@ const AMP_KNOB_X: [f32; 7] = [0.2751, 0.3501, 0.4251, 0.5001, 0.5751, 0.6501, 0.
 const AMP_ROW_Y: f32 = 0.4131;
 const AMP_KNOB_D: f32 = 0.056;
 const AMP_LED_D: f32 = 0.019;
-/// CLEAN, CRUNCH, LEAD, ACOUSTIC on the left; the acoustic channel's DECAY, ATTACK and
+/// CLEAN, CRUNCH, LEAD, LEAD II, ACOUSTIC on the left; the acoustic channel's DECAY, ATTACK and
 /// DYNAMIC switches, BRIGHT and POWER on the right.
-const AMP_CH_X: [f32; 4] = [0.092, 0.137, 0.182, 0.227];
+const AMP_CH_X: [f32; 5] = [0.060, 0.10175, 0.1435, 0.18525, 0.227];
+/// The channel behind each of those LEDs: LEAD II sits beside LEAD, though it is numbered last.
+const AMP_CH_ORDER: [usize; 5] = [0, 1, 2, 4, 3];
 const AMP_ACOUSTIC_X: [f32; 3] = [0.785, 0.821, 0.857];
 const AMP_BRIGHT_X: f32 = 0.899;
 const AMP_POWER_X: f32 = 0.937;
@@ -671,7 +673,7 @@ fn amp_page(app: &mut App, p: &mut Painter, r: Rect) {
 
     p.fill(r, SLATE);
     p.text(Font::Semibold, 15.0, "AMPLIFIER", 30.0, r.y + 20.0, rgb(240, 242, 245));
-    p.text(Font::Regular, 9.0, "Three tube channels plus an acoustic-guitar simulator — click a channel LED to switch, drag knobs (Shift = fine, double-click = reset)", 33.0, r.y + 52.0, rgba(205, 210, 220, 150));
+    p.text(Font::Regular, 9.0, "Four tube channels plus an acoustic-guitar simulator — click a channel LED to switch, drag knobs (Shift = fine, double-click = reset)", 33.0, r.y + 52.0, rgba(205, 210, 220, 150));
 
     // GPU soft shadows like the pedal pages: the stack on the slate, then the knobs and LEDs on the faceplate
     let u = hw / 1.6;
@@ -740,8 +742,9 @@ fn amp_page(app: &mut App, p: &mut Painter, r: Rect) {
         ("amp_led_red.png", rgb(255, 170, 40)),
         ("amp_led_red.png", rgb(255, 50, 40)),
         ("amp_led_green.png", rgb(90, 180, 255)),
+        ("amp_led_red.png", rgb(255, 60, 150)),
     ];
-    for (i, fx) in AMP_CH_X.iter().enumerate() {
+    for (fx, &i) in AMP_CH_X.iter().zip(AMP_CH_ORDER.iter()) {
         let c = at(*fx, AMP_ROW_Y);
         let on = ch == i as i32;
         amp_led(app, p, c, ld, on.then_some(lit[i]));
@@ -753,6 +756,10 @@ fn amp_page(app: &mut App, p: &mut Painter, r: Rect) {
             // acoustic is blue: cool the green lamp's core
             p.ellipse(Rect::centered(c.0, c.1, ld * 0.55, ld * 0.55), rgba(130, 200, 255, 210));
         }
+        if on && i == 4 {
+            // lead II is magenta: push the red lamp's core towards violet
+            p.ellipse(Rect::centered(c.0, c.1, ld * 0.55, ld * 0.55), rgba(255, 130, 220, 210));
+        }
         p.text_in(Font::ArialBold, lf * 0.82, spec::CHANNELS[i], Rect::new(c.0 - 40.0, c.1 + ld * 0.8, 80.0, lf * 2.0), 0.5, 0.5, PRINT);
         let hit = Rect::centered(c.0, c.1 + ld * 0.6, (hw * 0.04).max(ld * 2.2), ld * 3.2);
         if hot(app, Hit::Channel(i as u8)) {
@@ -761,7 +768,7 @@ fn amp_page(app: &mut App, p: &mut Painter, r: Rect) {
         app.hits.push((hit, Hit::Channel(i as u8)));
     }
     let c0 = at(AMP_CH_X[0], AMP_ROW_Y);
-    let c3 = at(AMP_CH_X[3], AMP_ROW_Y);
+    let c3 = at(AMP_CH_X[4], AMP_ROW_Y);
     p.text_in(Font::ArialBold, lf, "CHANNEL", Rect::new(c0.0, label_y, c3.0 - c0.0, lf * 2.0), 0.5, 0.5, PRINT);
 
     // the acoustic channel's switches: dimmed print while another channel is selected

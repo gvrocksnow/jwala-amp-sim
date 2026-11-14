@@ -13,7 +13,7 @@ pub struct AmpState {
     pub presence: f32,
     pub depth: f32,
     pub master: f32,
-    /// 0 clean, 1 crunch, 2 lead, 3 acoustic.
+    /// 0 clean, 1 crunch, 2 lead, 3 acoustic, 4 lead II.
     pub channel: u8,
     pub bright: bool,
     /// Acoustic-channel switches (see `dsp::acoustic`).

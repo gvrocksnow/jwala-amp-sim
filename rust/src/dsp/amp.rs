@@ -1,11 +1,15 @@
 //! Preamp + tone stack + power amp, all at 4x oversampling. Oversampled-slot pedals
 //! (drives/fuzz) run inside the same oversampled region so they don't alias either.
-//! Channel 3 (ACOUSTIC) swaps the tube stages for the acoustic-guitar simulator.
+//! Channel 3 (ACOUSTIC) swaps the tube stages for the acoustic-guitar simulator; channel 4
+//! (LEAD II) swaps the preamp stages for the circuit-level one in `amp_hg` and the power stage
+//! for the one in `power_amp`.
 
 use super::acoustic::AcousticSim;
+use super::amp_hg::{self, HiGain};
 use super::filters::{Biquad, OnePole, ToneStack};
 use super::oversampler::{Oversampler, FACTOR};
 use super::pedals::Stomp;
+use super::power_amp::PowerAmp;
 use super::state::AmpState;
 
 fn db(db: f64) -> f64 {
@@ -84,7 +88,12 @@ pub struct AmpEngine {
     last_ch: i32,
     last_bright: bool,
     acoustic: AcousticSim,
+    hg: HiGain,
+    pa: PowerAmp,
 }
+
+/// The LEAD II channel (`spec::HIGAIN`).
+const HIGAIN: u8 = 4;
 
 impl AmpEngine {
     pub fn new(sample_rate: f64, max_block: usize) -> Self {
@@ -114,6 +123,8 @@ impl AmpEngine {
             last_ch: -1,
             last_bright: false,
             acoustic: AcousticSim::new(sample_rate, max_block),
+            hg: HiGain::new(fs_os),
+            pa: PowerAmp::new(fs_os),
         }
     }
 
@@ -168,11 +179,25 @@ impl AmpEngine {
             self.acoustic.process(buf, p);
             return;
         }
-        let ch = p.channel.min(2);
+        let hg = p.channel == HIGAIN;
+        let ch = if hg { HIGAIN } else { p.channel.min(2) };
         if ch as i32 != self.last_ch || p.bright != self.last_bright {
+            if hg {
+                if self.last_ch != HIGAIN as i32 {
+                    self.hg.reset();
+                    self.pa.reset();
+                }
+            } else {
+                self.configure_channel(ch, p.bright);
+            }
             self.last_ch = ch as i32;
             self.last_bright = p.bright;
-            self.configure_channel(ch, p.bright);
+        }
+        if hg {
+            // its GAIN knob is a pot inside the preamp, not a level in front of it
+            self.hg.set(p.gain as f64, p.bright, buf.len(), self.fs_os / FACTOR as f64);
+            // and its PRESENCE and DEPTH sit in the power amp's feedback loop
+            self.pa.set(p.presence as f64, p.depth as f64);
         }
         self.tone.set(p.treble as f64, p.middle as f64, p.bass as f64);
         if p.presence as f64 != self.last_pres || p.depth as f64 != self.last_res {
@@ -188,7 +213,8 @@ impl AmpEngine {
             1 => -6.0 + 34.0 * g,
             _ => 34.0 * g,
         };
-        let t_gain = db(gain_db) * 4.0; // DI level (~0.1-0.3 peak) -> grid volts scale
+        // DI level (~0.1-0.3 peak) -> grid volts scale; LEAD II takes real volts at its input jack
+        let t_gain = if hg { amp_hg::INPUT_VOLTS } else { db(gain_db) * 4.0 };
         let t_master = db(-16.0 + 26.0 * p.master as f64); // power amp drive
         let ch_makeup = if ch == 0 { 1.6 } else { 1.0 };
         const TONE_MAKEUP: f64 = 3.2;
@@ -204,20 +230,29 @@ impl AmpEngine {
                     v = e.run(v, *on);
                 }
                 v *= self.s_gain;
-                let mut first = 0.0;
-                for st in 0..self.stage_count {
-                    v = self.stages[st].process(v);
-                    if st == 0 {
-                        v = self.bright_cap.process(v);
-                        first = v;
+                if hg {
+                    // the preamp's rail droops a little with the power amp's supply
+                    v = self.hg.process(v) * self.pa.rail();
+                } else {
+                    let mut first = 0.0;
+                    for st in 0..self.stage_count {
+                        v = self.stages[st].process(v);
+                        if st == 0 {
+                            v = self.bright_cap.process(v);
+                            first = v;
+                        }
                     }
-                }
-                v -= first * self.blend; // one stage is inverted against the four
-                if ch == 2 {
-                    v = self.lows.process(v);
+                    v -= first * self.blend; // one stage is inverted against the four
+                    if ch == 2 {
+                        v = self.lows.process(v);
+                    }
                 }
                 v = self.tone.process(v * ch_makeup) * TONE_MAKEUP;
 
+                if hg {
+                    *o = self.pa.process(self.power_hp.process(v) * self.s_master);
+                    continue;
+                }
                 // power amp: presence/depth, push-pull saturation with supply sag
                 v = self.resonance.process(self.presence.process(v));
                 v = self.power_hp.process(v) * self.s_master;

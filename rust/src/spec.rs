@@ -92,9 +92,12 @@ pub const ACOUSTIC_KNOB_NAMES: [&str; 7] = ["BODY", "BASS", "MID", "TREBLE", "AI
 /// The acoustic channel's switches (see `dsp::acoustic`), as printed under their LEDs.
 pub const ACOUSTIC_SWITCHES: [&str; 3] = ["DECAY", "ATTACK", "DYNAMIC"];
 
-pub const CHANNELS: [&str; 4] = ["CLEAN", "CRUNCH", "LEAD", "ACOUSTIC"];
+pub const CHANNELS: [&str; 5] = ["CLEAN", "CRUNCH", "LEAD", "ACOUSTIC", "LEAD II"];
 /// Index of the ACOUSTIC channel.
 pub const ACOUSTIC: i32 = 3;
+/// Index of the LEAD II channel (the circuit-level high-gain preamp, see `dsp::amp_hg`). It comes
+/// after ACOUSTIC so saved presets keep their channel numbers.
+pub const HIGAIN: i32 = 4;
 
 pub const CAB_KNOBS: [ParamSpec; 4] = [
     p("MIC POS", 0.3, |v| (if v < 0.15 { "CAP" } else if v < 0.6 { "CAP EDGE" } else { "CONE" }).into()),
