@@ -45,6 +45,13 @@ const PRESENCE_HZ: f64 = 1200.0;
 const DEPTH_HZ: f64 = 250.0;
 /// Supply droop at full continuous current.
 const SAG: f64 = 0.10;
+/// Output level: this stage clips squarer than the other channels' power stage, so at the same
+/// peak it is louder; this brings it back to their loudness.
+const OUT_TRIM: f64 = 0.78;
+/// Range and size of the valve table: drive at one grid, in volts either side of zero.
+const TAB_U: f64 = 160.0;
+const TAB_N: usize = 4096;
+const TAB_STEP: f64 = 2.0 * TAB_U / TAB_N as f64;
 /// Bound on the forward path's output, for bracketing the solve.
 const OUT_MAX: f64 = 1.05;
 
@@ -72,31 +79,36 @@ fn clip_soft(x: f64) -> (f64, f64) {
 /// (soft clip to +-1, its slope), sharp knee: the valves running out of plate voltage.
 #[inline]
 fn clip_hard(x: f64) -> (f64, f64) {
-    let q = 1.0 + x * x * x * x;
-    let r = 1.0 / q.sqrt().sqrt();
-    (x * r, r / q)
+    let x2 = x * x;
+    let iq = 1.0 / (1.0 + x2 * x2);
+    let r = iq.sqrt().sqrt();
+    (x * r, r * iq)
 }
 
 /// Trapezoidal one-pole low-pass whose output is available as `gain * input + state term`
 /// before the input is known.
 #[derive(Default, Clone, Copy)]
 struct Pole {
-    g: f64,
+    /// g / (1 + g) and 1 / (1 + g) for the prewarped g.
+    a: f64,
+    b: f64,
     s: f64,
 }
 
 impl Pole {
     fn set(&mut self, fs: f64, hz: f64) {
-        self.g = (PI * hz / fs).tan();
+        let g = (PI * hz / fs).tan();
+        self.a = g / (1.0 + g);
+        self.b = 1.0 / (1.0 + g);
     }
     /// The low-pass output will be `.0 * x + .1`.
     #[inline]
     fn peek(&self) -> (f64, f64) {
-        (self.g / (1.0 + self.g), self.s / (1.0 + self.g))
+        (self.a, self.s * self.b)
     }
     #[inline]
     fn push(&mut self, x: f64) {
-        let v = (x - self.s) * self.g / (1.0 + self.g);
+        let v = (x - self.s) * self.a;
         self.s += 2.0 * v;
     }
 }
@@ -134,6 +146,16 @@ impl Band {
     }
 }
 
+/// One power valve against the drive `u` arriving at its grid: [plate current as a fraction of
+/// its peak, volts by which the grid was driven past the point where it conducts].
+fn valve(u: f64) -> [f64; 2] {
+    // the grid cannot go above the cathode: past that it conducts and clamps
+    let (over, _) = softplus(u - BIAS, 1.5);
+    // three-halves power law above cutoff
+    let (s, _) = softplus(u - over - BIAS + CUTOFF, 2.0);
+    [(s / CUTOFF).powf(1.5), over]
+}
+
 /// Everything the forward path produces for one error voltage.
 struct Fwd {
     /// Speaker voltage and its slope against the error voltage.
@@ -169,8 +191,13 @@ pub struct PowerAmp {
     flux_sat: f64,
     loss: f64,
     ot: OnePole,
-    /// Last solution.
+    /// Current the pair draws at rest.
+    idle: f64,
+    /// `valve` tabulated over -TAB_U..TAB_U, so the solve needs no exponentials.
+    tab: Vec<[f64; 2]>,
+    /// The last two solutions.
     e: f64,
+    e1: f64,
 }
 
 impl PowerAmp {
@@ -206,12 +233,43 @@ impl PowerAmp {
             flux_sat: 1.0 / (2.0 * PI * 45.0),
             loss: 0.0,
             ot,
+            idle: 2.0 * valve(0.0)[0],
+            tab: (0..=TAB_N).map(|i| valve(-TAB_U + i as f64 * TAB_STEP)).collect(),
             e: 0.0,
+            e1: 0.0,
         }
     }
 
     pub fn reset(&mut self) {
-        *self = PowerAmp { kp: self.kp, kd: self.kd, ..PowerAmp::new(self.fs) };
+        self.spk_res.ic1 = 0.0;
+        self.spk_res.ic2 = 0.0;
+        self.spk_rise.s = 0.0;
+        self.pres.s = 0.0;
+        self.dep.s = 0.0;
+        self.vc = [0.0; 2];
+        self.droop = 0.0;
+        self.droop_slow = 0.0;
+        self.flux = 0.0;
+        self.loss = 0.0;
+        self.ot.reset();
+        self.e = 0.0;
+        self.e1 = 0.0;
+    }
+
+    /// (valve current, grid overdrive, and their slopes) for drive `u` at a grid. Below the
+    /// table the valve is cut off; above it the grid is clamped, which the last segment's
+    /// slopes continue.
+    #[inline]
+    fn lookup(&self, u: f64) -> (f64, f64, f64, f64) {
+        let p = (u + TAB_U) * (1.0 / TAB_STEP);
+        if p <= 0.0 {
+            return (0.0, 0.0, 0.0, 0.0);
+        }
+        let i = (p as usize).min(TAB_N - 1);
+        let f = p - i as f64;
+        let (a, b) = (self.tab[i], self.tab[i + 1]);
+        let (di, dover) = (b[0] - a[0], b[1] - a[1]);
+        (a[0] + f * di, a[1] + f * dover, di * (1.0 / TAB_STEP), dover * (1.0 / TAB_STEP))
     }
 
     /// PRESENCE and DEPTH, 0..1.
@@ -227,31 +285,24 @@ impl PowerAmp {
     }
 
     /// Phase inverter -> grids -> valves -> speaker load -> supply limit, for error voltage `e`.
-    /// `z0` and `sz` are the speaker load's gain and state term for this sample.
+    /// `z0` and `sz` are the speaker load's gain and state term for this sample; `headroom` is
+    /// what the sagging supply leaves, `screen` what that leaves of the valves' current.
     #[inline]
-    fn forward(&self, e: f64, z0: f64, sz: f64) -> Fwd {
+    fn forward(&self, e: f64, z0: f64, sz: f64, headroom: f64, inv_headroom: f64, screen: f64) -> Fwd {
         let (d, dd) = clip_soft(e * (PI_GAIN / PI_SWING));
         let (d, dd) = (d * PI_SWING, dd * PI_GAIN);
-        // screens sag with the supply, and the valves pass less current for the same grid voltage
-        let headroom = 1.0 - self.droop;
-        let screen = headroom * headroom.sqrt();
         let mut f = Fwd { y: 0.0, dy: 0.0, over: [0.0; 2], i: [0.0; 2] };
         let mut di = 0.0;
         for (k, sign) in [(0, 1.0), (1, -PI_BALANCE)] {
             // drive at the grid, less what has collected on its coupling cap
             let u = sign * d - self.vc[k];
-            // the grid cannot go above the cathode: past that it conducts and clamps
-            let (over, dover) = softplus(u - BIAS, 1.5);
-            let vg = u - over - BIAS;
-            // three-halves power law above cutoff
-            let (s, ds) = softplus(vg + CUTOFF, 2.0);
-            let r = (s / CUTOFF).sqrt();
+            let (i, over, di_du, _) = self.lookup(u);
             f.over[k] = over;
-            f.i[k] = screen * r * s / CUTOFF;
-            di += sign.abs() * screen * 1.5 * r / CUTOFF * ds * (1.0 - dover) * dd;
+            f.i[k] = screen * i;
+            di += sign.abs() * screen * di_du * dd;
         }
         let v = z0 * (f.i[0] - f.i[1]) + sz;
-        let (c, dc) = clip_hard(v / headroom);
+        let (c, dc) = clip_hard(v * inv_headroom);
         // a core near saturation only resists being pushed further the same way
         let keep = if c * self.flux > 0.0 { 1.0 - self.loss } else { 1.0 };
         f.y = headroom * c * keep;
@@ -274,13 +325,19 @@ impl PowerAmp {
 
         // error = input - feedback: e + g0 * y(e) = x - sg. The left side rises with e, so
         // Newton is kept inside a bracket and falls back to bisection.
+        // screens sag with the supply, and the valves pass less current for the same grid voltage
+        let headroom = 1.0 - self.droop;
+        let inv_headroom = 1.0 / headroom;
+        let screen = headroom * headroom.sqrt();
         let target = x - sg;
         let (mut lo, mut hi) = (target - g0 * OUT_MAX, target + g0 * OUT_MAX);
-        let mut e = self.e.clamp(lo, hi);
-        let mut f = self.forward(e, z0, sz);
+        // start from where the last two solutions were heading
+        let mut e = (2.0 * self.e - self.e1).clamp(lo, hi);
+        self.e1 = self.e;
+        let mut f = self.forward(e, z0, sz, headroom, inv_headroom, screen);
         for _ in 0..40 {
             let r = e + g0 * f.y - target;
-            if r.abs() < 1e-10 {
+            if r.abs() < 1e-6 {
                 break;
             }
             if r > 0.0 {
@@ -290,7 +347,7 @@ impl PowerAmp {
             }
             let en = e - r / (1.0 + g0 * f.dy);
             e = if en > lo && en < hi { en } else { 0.5 * (lo + hi) };
-            f = self.forward(e, z0, sz);
+            f = self.forward(e, z0, sz, headroom, inv_headroom, screen);
         }
         self.e = e;
         let y = f.y;
@@ -305,8 +362,7 @@ impl PowerAmp {
             self.vc[k] += self.cap_charge * f.over[k] - self.cap_leak * self.vc[k];
         }
         // the supply sags with the current drawn beyond idle
-        let idle = 2.0 * ((CUTOFF - BIAS) / CUTOFF).powf(1.5);
-        let draw = SAG * (f.i[0] + f.i[1] - idle).max(0.0);
+        let draw = SAG * (f.i[0] + f.i[1] - self.idle).max(0.0);
         self.droop += self.droop_k * (draw - self.droop);
         self.droop_slow += self.droop_slow_k * (self.droop - self.droop_slow);
         // the transformer core integrates the output; near saturation it takes some of it back
@@ -314,7 +370,7 @@ impl PowerAmp {
         let fl = (self.flux / self.flux_sat).abs();
         self.loss = (0.2 * fl * fl * fl).min(0.6);
 
-        self.ot.low_pass(y)
+        self.ot.low_pass(y) * OUT_TRIM
     }
 }
 
@@ -337,7 +393,7 @@ mod tests {
                 hi = hi.max(y);
             }
         }
-        (hi - lo) / (2.0 * a)
+        (hi - lo) / (2.0 * a * OUT_TRIM)
     }
 
     #[test]

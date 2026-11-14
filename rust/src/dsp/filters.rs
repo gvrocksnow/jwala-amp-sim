@@ -147,20 +147,23 @@ pub struct ToneStack {
     y2: f64,
     y3: f64,
     last: (f64, f64, f64),
+    parts: [f64; 7],
 }
 
 impl ToneStack {
-    // JCM800-ish component values
-    const R1: f64 = 220e3;
-    const R2: f64 = 1e6;
-    const R3: f64 = 22e3;
-    const R4: f64 = 33e3;
-    const C1: f64 = 470e-12;
-    const C2: f64 = 22e-9;
-    const C3: f64 = 22e-9;
+    /// Component values as [treble pot, bass pot, mid pot, slope resistor, treble cap, bass cap,
+    /// mid cap]. JCM800-ish: the clean, crunch and lead channels.
+    pub const JCM800: [f64; 7] = [220e3, 1e6, 22e3, 33e3, 470e-12, 22e-9, 22e-9];
+    /// The SLO-family stack that goes with the LEAD II preamp: a larger slope resistor, so the
+    /// mids scoop deeper.
+    pub const SLO: [f64; 7] = [250e3, 1e6, 25e3, 47e3, 470e-12, 22e-9, 22e-9];
 
     pub fn new(sample_rate: f64) -> Self {
-        let mut t = ToneStack { fs: sample_rate, b: [0.0; 4], a: [0.0; 3], x1: 0.0, x2: 0.0, x3: 0.0, y1: 0.0, y2: 0.0, y3: 0.0, last: (-1.0, -1.0, -1.0) };
+        Self::with_parts(sample_rate, Self::JCM800)
+    }
+
+    pub fn with_parts(sample_rate: f64, parts: [f64; 7]) -> Self {
+        let mut t = ToneStack { fs: sample_rate, b: [0.0; 4], a: [0.0; 3], x1: 0.0, x2: 0.0, x3: 0.0, y1: 0.0, y2: 0.0, y3: 0.0, last: (-1.0, -1.0, -1.0), parts };
         t.set(0.5, 0.5, 0.5);
         t
     }
@@ -171,7 +174,7 @@ impl ToneStack {
             return;
         }
         self.last = (treble, mid, bass);
-        let (r1, r2, r3, r4, c1, c2, c3) = (Self::R1, Self::R2, Self::R3, Self::R4, Self::C1, Self::C2, Self::C3);
+        let [r1, r2, r3, r4, c1, c2, c3] = self.parts;
         let (t, m, l) = (treble, mid, ((bass - 1.0) * 3.5).exp()); // log taper bass pot
 
         let b1 = t * c1 * r1 + m * c3 * r3 + l * (c1 * r2 + c2 * r2) + (c1 * r3 + c2 * r3);
@@ -226,5 +229,34 @@ impl ToneStack {
         self.y2 = self.y1;
         self.y1 = y;
         y
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Gain of the stack at `hz` with all three knobs at noon.
+    fn gain(parts: [f64; 7], hz: f64) -> f64 {
+        let fs = 384000.0;
+        let mut t = ToneStack::with_parts(fs, parts);
+        let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+        for n in 0..fs as usize / 4 {
+            let y = t.process((2.0 * PI * hz * n as f64 / fs).sin());
+            if n > fs as usize / 8 {
+                lo = lo.min(y);
+                hi = hi.max(y);
+            }
+        }
+        (hi - lo) / 2.0
+    }
+
+    #[test]
+    fn slo_stack_scoops_deeper_than_jcm800() {
+        for (name, parts) in [("JCM800", ToneStack::JCM800), ("SLO", ToneStack::SLO)] {
+            let g: Vec<String> = [100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0].iter().map(|f| format!("{:+.1}", 20.0 * gain(parts, *f).log10())).collect();
+            println!("{name}: 100/250/500/1k/2.5k/5k Hz = {} dB", g.join(" / "));
+        }
+        assert!(gain(ToneStack::SLO, 500.0) < gain(ToneStack::JCM800, 500.0));
     }
 }

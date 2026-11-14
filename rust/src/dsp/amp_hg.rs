@@ -80,10 +80,11 @@ struct Stage {
     ck_t: f64,
     cc_t: f64,
     cm_t: f64,
-    /// Input network as seen from the grid (see `set_input`).
-    rc: f64,
+    /// Input network as seen from the grid (see `set_input`): 1 / rc, the source's share that
+    /// reaches the grid over the resistance it arrives through, and that resistance with the
+    /// Miller cap's companion in parallel.
+    inv_rc: f64,
     k_th: f64,
-    rth: f64,
     rth2: f64,
     /// Operating point.
     ip_q: f64,
@@ -147,9 +148,8 @@ impl Stage {
             ck_t,
             cc_t: if c.cc > 0.0 { t / c.cc } else { 0.0 },
             cm_t: c.cm / t,
-            rc: 0.0,
+            inv_rc: 0.0,
             k_th: 0.0,
-            rth: 0.0,
             rth2: 0.0,
             ip_q: 0.0,
             vk_q,
@@ -169,10 +169,11 @@ impl Stage {
     /// Sets the attenuator in front of the grid: `rs` in series after the coupling cap,
     /// `rg` from there to ground.
     fn set_input(&mut self, rs: f64, rg: f64) {
-        self.rc = self.c.ro + rs + self.cc_t;
-        self.k_th = rg / (self.rc + rg);
-        self.rth = self.rc * rg / (self.rc + rg) + self.c.rgs;
-        self.rth2 = 1.0 / (self.cm_t + 1.0 / self.rth);
+        let rc = self.c.ro + rs + self.cc_t;
+        let rth = rc * rg / (rc + rg) + self.c.rgs;
+        self.inv_rc = 1.0 / rc;
+        self.k_th = rg / (rc + rg) / rth;
+        self.rth2 = 1.0 / (self.cm_t + 1.0 / rth);
     }
 
     fn reset(&mut self) {
@@ -183,19 +184,30 @@ impl Stage {
         self.lp.reset();
     }
 
-    /// (plate current, grid current, and their slopes) at grid-to-cathode voltage `x`.
+    /// Which straight piece of the tables `x` falls on (-1 below them, where they are flat).
     #[inline]
-    fn lookup(&self, x: f64) -> (f64, f64, f64, f64) {
+    fn segment(x: f64) -> isize {
+        let p = (x - X_MIN) * (1.0 / X_STEP);
+        if p <= 0.0 {
+            -1
+        } else {
+            (p as usize).min(TAB_N - 1) as isize
+        }
+    }
+
+    /// (plate current, grid current, their slopes, the table segment) at grid-to-cathode voltage `x`.
+    #[inline]
+    fn lookup(&self, x: f64) -> (f64, f64, f64, f64, isize) {
         let p = (x - X_MIN) * (1.0 / X_STEP);
         if p <= 0.0 {
             let e = self.tab[0];
-            return (e[0], e[1], 0.0, 0.0);
+            return (e[0], e[1], 0.0, 0.0, -1);
         }
         let i = (p as usize).min(TAB_N - 1);
         let f = p - i as f64; // above the table this exceeds 1: linear extrapolation
         let (a, b) = (self.tab[i], self.tab[i + 1]);
         let (dl, dg) = (b[0] - a[0], b[1] - a[1]);
-        (a[0] + f * dl, a[1] + f * dg, dl * (1.0 / X_STEP), dg * (1.0 / X_STEP))
+        (a[0] + f * dl, a[1] + f * dg, dl * (1.0 / X_STEP), dg * (1.0 / X_STEP), i as isize)
     }
 
     /// Takes the previous stage's plate signal in volts, returns this plate's signal in volts.
@@ -204,35 +216,50 @@ impl Stage {
         // everything in front of the grid, reduced to a source `vth` behind a resistance `r`
         let e = vin - self.vc;
         let r = self.rth2;
-        let vth = r * (e * self.k_th / self.rth + self.cm_t * self.vg);
+        let vth = r * (e * self.k_th + self.cm_t * self.vg);
         // the cathode sits at ak * (ip + ig) + bk
         let ak = self.ak;
         let bk = ak * self.ck_t * self.vk;
 
         // solve x + ak * (ip(x) + ig(x)) + r * ig(x) = vth - bk for x. The left side rises
-        // monotonically, so Newton is kept inside a bracket and falls back to bisection.
+        // monotonically and the tables are piecewise linear, so a Newton step that stays on the
+        // same piece lands exactly on the answer; otherwise it is kept inside a bracket and
+        // falls back to bisection.
         let target = vth - bk;
-        let mut x = target;
-        if target > X_MIN {
-            let (l0, g0, _, _) = self.lookup(target);
-            let (mut lo, mut hi) = (target - ak * (l0 + g0) - r * g0, target);
-            x = self.x.clamp(lo, hi);
-            for _ in 0..32 {
-                let (l, g, dl, dg) = self.lookup(x);
-                let f = x + ak * (l + g) + r * g - target;
-                if f.abs() < 1e-9 {
+        let (mut lo, mut hi) = (f64::NEG_INFINITY, target);
+        let mut x = self.x.min(target);
+        let (mut ip, mut ig);
+        let mut n = 0;
+        loop {
+            let (l, g, dl, dg, seg) = self.lookup(x);
+            (ip, ig) = (l, g);
+            let f = x + ak * (l + g) + r * g - target;
+            n += 1;
+            if f.abs() < 1e-9 || n == 32 {
+                break;
+            }
+            if f > 0.0 {
+                hi = x;
+            } else {
+                lo = x;
+            }
+            let xn = x - f / (1.0 + ak * (dl + dg) + r * dg);
+            if xn > lo && xn < hi {
+                if Self::segment(xn) == seg {
+                    (ip, ig) = (l + dl * (xn - x), g + dg * (xn - x));
+                    x = xn;
                     break;
                 }
-                if f > 0.0 {
-                    hi = x;
-                } else {
-                    lo = x;
+                x = xn;
+            } else {
+                if lo == f64::NEG_INFINITY {
+                    // the currents only grow with x, so this is at or below the answer
+                    let (l0, g0, ..) = self.lookup(target);
+                    lo = target - ak * (l0 + g0) - r * g0;
                 }
-                let xn = x - f / (1.0 + ak * (dl + dg) + r * dg);
-                x = if xn > lo && xn < hi { xn } else { 0.5 * (lo + hi) };
+                x = 0.5 * (lo + hi);
             }
         }
-        let (ip, ig, _, _) = self.lookup(x);
         self.x = x;
 
         let vk = ak * (ip + ig) + bk;
@@ -241,7 +268,7 @@ impl Stage {
         // charge the coupling cap: this is what shifts the bias after a hard transient
         let i_in = ig + self.cm_t * (vg - self.vg);
         let va = vg + self.c.rgs * i_in;
-        self.vc += self.cc_t * (e - va) / self.rc;
+        self.vc += self.cc_t * (e - va) * self.inv_rc;
         self.vk = vk;
         self.vg = vg;
 
@@ -408,5 +435,33 @@ mod tests {
         }
         println!("tail after drive: {tail:e}");
         assert!(tail < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use crate::dsp::power_amp::PowerAmp;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore]
+    fn timing() {
+        let fs = 384000.0;
+        let n = fs as usize * 4;
+        // a decaying low note with some upper content, like a palm mute ringing out
+        let sig: Vec<f64> = (0..n).map(|i| { let t = i as f64 / fs; 0.6 * (-t).exp() * ((2.0 * std::f64::consts::PI * 110.0 * t).sin() + 0.3 * (2.0 * std::f64::consts::PI * 990.0 * t).sin()) }).collect();
+        let mut hg = HiGain::new(fs);
+        hg.set(0.6, false, 256, 48000.0);
+        let t0 = Instant::now();
+        let pre: Vec<f64> = sig.iter().map(|x| hg.process(*x)).collect();
+        let t_pre = t0.elapsed().as_secs_f64();
+        let mut pa = PowerAmp::new(fs);
+        pa.set(0.5, 0.4);
+        let t0 = Instant::now();
+        let mut acc = 0.0;
+        for x in pre.iter() { acc += pa.process(*x * 0.7); }
+        let t_pa = t0.elapsed().as_secs_f64();
+        println!("preamp {:.0} ns/sample ({:.1}% of a core at 8x), power amp {:.0} ns/sample ({:.1}%) [{acc:.3}]", t_pre / n as f64 * 1e9, t_pre / 4.0 * 100.0, t_pa / n as f64 * 1e9, t_pa / 4.0 * 100.0);
     }
 }

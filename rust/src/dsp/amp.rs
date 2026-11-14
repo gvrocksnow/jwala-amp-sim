@@ -2,12 +2,12 @@
 //! (drives/fuzz) run inside the same oversampled region so they don't alias either.
 //! Channel 3 (ACOUSTIC) swaps the tube stages for the acoustic-guitar simulator; channel 4
 //! (LEAD II) swaps the preamp stages for the circuit-level one in `amp_hg` and the power stage
-//! for the one in `power_amp`.
+//! for the one in `power_amp`, with its own tone stack values, all at 8x.
 
 use super::acoustic::AcousticSim;
 use super::amp_hg::{self, HiGain};
 use super::filters::{Biquad, OnePole, ToneStack};
-use super::oversampler::{Oversampler, FACTOR};
+use super::oversampler::{Doubler, Oversampler, FACTOR};
 use super::pedals::Stomp;
 use super::power_amp::PowerAmp;
 use super::state::AmpState;
@@ -90,16 +90,25 @@ pub struct AmpEngine {
     acoustic: AcousticSim,
     hg: HiGain,
     pa: PowerAmp,
+    /// LEAD II's tone stack and power amp input high-pass, at its 8x rate.
+    hg_tone: ToneStack,
+    hg_hp: Biquad,
+    /// The 2x stage that takes LEAD II from the 4x region up to 8x and back.
+    x2: Doubler,
 }
 
 /// The LEAD II channel (`spec::HIGAIN`).
 const HIGAIN: u8 = 4;
+/// Level out of LEAD II's tone stack into its power amp.
+const HG_TONE_MAKEUP: f64 = 3.2;
 
 impl AmpEngine {
     pub fn new(sample_rate: f64, max_block: usize) -> Self {
         let fs_os = sample_rate * FACTOR as f64;
         let mut power_hp = Biquad::default();
         power_hp.high_pass(fs_os, 35.0, 0.7);
+        let mut hg_hp = Biquad::default();
+        hg_hp.high_pass(fs_os * 2.0, 35.0, 0.7);
         AmpEngine {
             fs_os,
             os: Oversampler::new(),
@@ -123,8 +132,11 @@ impl AmpEngine {
             last_ch: -1,
             last_bright: false,
             acoustic: AcousticSim::new(sample_rate, max_block),
-            hg: HiGain::new(fs_os),
-            pa: PowerAmp::new(fs_os),
+            hg: HiGain::new(fs_os * 2.0),
+            pa: PowerAmp::new(fs_os * 2.0),
+            hg_tone: ToneStack::with_parts(fs_os * 2.0, ToneStack::SLO),
+            hg_hp,
+            x2: Doubler::new(),
         }
     }
 
@@ -186,6 +198,8 @@ impl AmpEngine {
                 if self.last_ch != HIGAIN as i32 {
                     self.hg.reset();
                     self.pa.reset();
+                    self.hg_hp.reset();
+                    self.x2 = Doubler::new();
                 }
             } else {
                 self.configure_channel(ch, p.bright);
@@ -198,6 +212,7 @@ impl AmpEngine {
             self.hg.set(p.gain as f64, p.bright, buf.len(), self.fs_os / FACTOR as f64);
             // and its PRESENCE and DEPTH sit in the power amp's feedback loop
             self.pa.set(p.presence as f64, p.depth as f64);
+            self.hg_tone.set(p.treble as f64, p.middle as f64, p.bass as f64);
         }
         self.tone.set(p.treble as f64, p.middle as f64, p.bass as f64);
         if p.presence as f64 != self.last_pres || p.depth as f64 != self.last_res {
@@ -231,8 +246,16 @@ impl AmpEngine {
                 }
                 v *= self.s_gain;
                 if hg {
-                    // the preamp's rail droops a little with the power amp's supply
-                    v = self.hg.process(v) * self.pa.rail();
+                    // the whole amp at twice the rate of the region around it
+                    let mut pair = self.x2.up(v);
+                    for w in pair.iter_mut() {
+                        // the preamp's rail droops a little with the power amp's supply
+                        let t = self.hg.process(*w) * self.pa.rail();
+                        let t = self.hg_tone.process(t) * HG_TONE_MAKEUP;
+                        *w = self.pa.process(self.hg_hp.process(t) * self.s_master);
+                    }
+                    *o = self.x2.down(pair[0], pair[1]);
+                    continue;
                 } else {
                     let mut first = 0.0;
                     for st in 0..self.stage_count {
@@ -249,10 +272,6 @@ impl AmpEngine {
                 }
                 v = self.tone.process(v * ch_makeup) * TONE_MAKEUP;
 
-                if hg {
-                    *o = self.pa.process(self.power_hp.process(v) * self.s_master);
-                    continue;
-                }
                 // power amp: presence/depth, push-pull saturation with supply sag
                 v = self.resonance.process(self.presence.process(v));
                 v = self.power_hp.process(v) * self.s_master;
