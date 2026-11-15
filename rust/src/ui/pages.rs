@@ -1327,6 +1327,7 @@ fn preset_menu(app: &mut App, p: &mut Painter) {
 fn dialog(app: &mut App, p: &mut Painter, w: f32, h: f32) {
     let Some(d) = &app.dialog else { return };
     let text = d.text.clone();
+    let cursor = d.cursor.min(text.len());
     p.fill(Rect::new(0.0, 0.0, w, h), rgba(0, 0, 0, 140));
     app.hits.push((Rect::new(0.0, 0.0, w, h), Hit::Block));
     let r = Rect::centered(w / 2.0, h / 2.0, 420.0, 170.0);
@@ -1336,8 +1337,14 @@ fn dialog(app: &mut App, p: &mut Painter, w: f32, h: f32) {
     let field = Rect::new(r.x + 22.0, r.y + 56.0, r.w - 44.0, 34.0);
     p.rrect(field, 5.0, rgb(37, 37, 40));
     p.rrect_stroke(field, 5.0, 1.0, rgb(79, 79, 82));
-    let caret = if std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() % 1000 < 500).unwrap_or(true) { "|" } else { "" };
-    p.text_in(Font::Regular, 10.5, &format!("{text}{caret}"), Rect::new(field.x + 10.0, field.y, field.w - 20.0, field.h), 0.0, 0.5, TEXT);
+    p.text_in(Font::Regular, 10.5, &text, Rect::new(field.x + 10.0, field.y, field.w - 20.0, field.h), 0.0, 0.5, TEXT);
+    let blink_on = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() % 1000 < 500).unwrap_or(true);
+    if blink_on {
+        let lm = text::line_metrics(Font::Regular, 10.5);
+        let cx = field.x + 10.0 + text::measure(Font::Regular, 10.5, &text[..cursor]);
+        let ch = lm.height();
+        p.fill(Rect::new(cx.round(), field.y + (field.h - ch) / 2.0, 1.0, ch), TEXT);
+    }
     button(app, p, Rect::new(r.right() - 22.0 - 110.0, r.bottom() - 52.0, 110.0, 32.0), "SAVE", Hit::DialogOk, true, 9.0);
     button(app, p, Rect::new(r.right() - 22.0 - 230.0, r.bottom() - 52.0, 110.0, 32.0), "CANCEL", Hit::DialogCancel, false, 9.0);
 }

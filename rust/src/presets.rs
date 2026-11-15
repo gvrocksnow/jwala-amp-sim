@@ -9,19 +9,19 @@ pub type State = HashMap<String, f32>;
 /// Factory presets: partial states; unspecified values use defaults, effects off.
 pub const FACTORY: [(&str, &str); 14] = [
     ("Init", ""),
-    ("Glass Clean", "amp.CHANNEL=0 amp.GAIN=0.45 amp.BASS=0.55 amp.MIDDLE=0.45 amp.TREBLE=0.65 amp.BRIGHT=1 comp.ON=1 comp.SUSTAIN=0.45 chorus.ON=1 chorus.MIX=0.35 delay.ON=1 delay.TIME=0.62 delay.MIX=0.22 reverb.ON=1 reverb.MIX=0.3 cab.MODEL=1"),
-    ("Ambient Shimmer", "amp.CHANNEL=0 amp.GAIN=0.4 amp.TREBLE=0.6 comp.ON=1 delay.ON=1 delay.TIME=0.72 delay.FEEDBACK=0.55 delay.MIX=0.35 delay.MOD=0.45 delay.SPREAD=1 reverb.ON=1 reverb.DECAY=0.85 reverb.SIZE=0.9 reverb.SHIMMER=0.45 reverb.MIX=0.55 reverb.PREDELAY=0.3 cab.MODEL=1"),
-    ("Classic Crunch", "doubler.ON=1 doubler.AMOUNT=0.4 amp.CHANNEL=1 amp.GAIN=0.55 amp.MIDDLE=0.7 amp.TREBLE=0.6 amp.PRESENCE=0.55 reverb.ON=1 reverb.DECAY=0.3 reverb.MIX=0.18 cab.MODEL=0"),
-    ("Blues Lead", "amp.CHANNEL=1 amp.GAIN=0.6 amp.MIDDLE=0.7 od.ON=1 od.DRIVE=0.5 od.LEVEL=0.55 delay.ON=1 delay.TIME=0.5 delay.MIX=0.18 delay.FEEDBACK=0.25 reverb.ON=1 reverb.MIX=0.22 cab.MODEL=2"),
-    ("Modern Metal", "doubler.ON=1 amp.CHANNEL=2 amp.GAIN=0.55 amp.BASS=0.55 amp.MIDDLE=0.45 amp.TREBLE=0.62 amp.DEPTH=0.6 global.GATE=0.45 od.ON=1 od.DRIVE=0 od.LEVEL=0.85 od.TONE=0.6 cab.MODEL=0 cab.MIC POS=0.25"),
-    ("Soaring Solo", "amp.CHANNEL=2 amp.GAIN=0.7 amp.MIDDLE=0.7 amp.PRESENCE=0.55 od.ON=1 od.DRIVE=0.2 od.LEVEL=0.75 delay.ON=1 delay.TIME=0.66 delay.FEEDBACK=0.42 delay.MIX=0.3 delay.DUCK=0.6 delay.SPREAD=0.8 reverb.ON=1 reverb.DECAY=0.55 reverb.MIX=0.28"),
-    ("Lead II Rhythm", "doubler.ON=1 amp.CHANNEL=4 amp.GAIN=0.5 amp.BASS=0.55 amp.MIDDLE=0.45 amp.TREBLE=0.6 amp.PRESENCE=0.55 amp.DEPTH=0.6 global.GATE=0.45 od.ON=1 od.DRIVE=0 od.LEVEL=0.85 od.TONE=0.6 cab.MODEL=0 cab.MIC POS=0.25"),
-    ("Lead II Solo", "amp.CHANNEL=4 amp.GAIN=0.65 amp.MIDDLE=0.65 amp.PRESENCE=0.5 od.ON=1 od.DRIVE=0.2 od.LEVEL=0.75 delay.ON=1 delay.TIME=0.66 delay.FEEDBACK=0.42 delay.MIX=0.3 delay.DUCK=0.6 delay.SPREAD=0.8 reverb.ON=1 reverb.DECAY=0.55 reverb.MIX=0.28"),
-    ("Fuzz Wall","amp.CHANNEL=1 amp.GAIN=0.4 fuzz.ON=1 fuzz.SUSTAIN=0.75 fuzz.TONE=0.45 phaser.ON=1 phaser.MIX=0.4 reverb.ON=1 reverb.MIX=0.25 cab.MODEL=0"),
-    ("Rodent Grunge", "doubler.ON=1 amp.CHANNEL=1 amp.GAIN=0.45 dist.ON=1 dist.DIST=0.65 dist.FILTER=0.4 chorus.ON=1 chorus.RATE=0.25 chorus.MIX=0.4 cab.MODEL=0"),
-    ("Acoustic 1", "amp.CHANNEL=3 amp.GAIN=0.56 amp.BASS=0 amp.MIDDLE=0 amp.TREBLE=0.73 amp.PRESENCE=0.45 amp.DEPTH=0 amp.MASTER=0.5 cab.ON=0 comp.ON=1 comp.SUSTAIN=0.25 comp.ATTACK=0.6 comp.LEVEL=0.35 reverb.ON=1 reverb.DECAY=0.2 reverb.SIZE=0.5 reverb.PREDELAY=0.05 reverb.MOD=0.2 reverb.MIX=0.32"),
-    ("Acoustic 2", "amp.CHANNEL=3 amp.GAIN=0.85 amp.BASS=0.2 amp.MIDDLE=0.87 amp.TREBLE=1 amp.PRESENCE=0.36 amp.DEPTH=0 amp.MASTER=0.5 cab.ON=0 comp.ON=1 comp.SUSTAIN=0.25 comp.ATTACK=0.6 comp.LEVEL=0.35 reverb.ON=1 reverb.DECAY=0.35 reverb.SIZE=0.5 reverb.PREDELAY=0.05 reverb.MOD=0.2 reverb.MIX=0.35"),
-    ("Acoustic 3", "amp.CHANNEL=3 amp.GAIN=0.5 amp.BASS=0.5 amp.MIDDLE=0.5 amp.TREBLE=0.5 amp.PRESENCE=0.4 amp.DEPTH=0.5 amp.MASTER=0.5 amp.DECAY=1 cab.ON=0 comp.ON=1 comp.SUSTAIN=0.25 comp.ATTACK=0.6 comp.LEVEL=0.35 reverb.ON=1 reverb.DECAY=0.35 reverb.SIZE=0.5 reverb.PREDELAY=0.05 reverb.MOD=0.2 reverb.MIX=0.15"),
+    ("Glass Clean", "amp.BASS=0.55 amp.BRIGHT=1 amp.CHANNEL=0 amp.GAIN=0.45 amp.MIDDLE=0.45 amp.TREBLE=0.65 cab.MODEL=1 chorus.MIX=0.35 chorus.ON=1 comp.ON=1 comp.SUSTAIN=0.45 delay.MIX=0.22 delay.ON=1 delay.TIME=0.62 reverb.ON=1 reverb.SHIMMER=0.595"),
+    ("Ambient Shimmer", "amp.BASS=0.762 amp.CHANNEL=2 amp.DEPTH=0.375 amp.GAIN=0.23 amp.MASTER=0.805 amp.MIDDLE=0.25 amp.PRESENCE=0.243 amp.TREBLE=0.713 cab.MIC POS=0.731 cab.MODEL=1 comp.ON=1 delay.FEEDBACK=0.55 delay.MIX=0.35 delay.MOD=0.45 delay.SPREAD=1 delay.TIME=0.754 od.ON=1 reverb.DECAY=0.51 reverb.MIX=0.55 reverb.ON=1 reverb.PREDELAY=0.3 reverb.SHIMMER=0.45 reverb.SIZE=0.9"),
+    ("Classic Crunch", "amp.GAIN=0.55 amp.MIDDLE=0.7 amp.PRESENCE=0.55 doubler.AMOUNT=0.4 doubler.ON=1 reverb.DECAY=0.3 reverb.MIX=0.18 reverb.ON=1"),
+    ("Blues Lead", "amp.MIDDLE=0.7 cab.MODEL=2 delay.FEEDBACK=0.25 delay.MIX=0.18 delay.ON=1 delay.TIME=0.5 od.DRIVE=0.5 od.LEVEL=0.55 od.ON=1 reverb.MIX=0.22 reverb.ON=1"),
+    ("Lead II Rhythm", "amp.BASS=0.55 amp.CHANNEL=4 amp.DEPTH=0.6 amp.GAIN=0.5 amp.MIDDLE=0.45 amp.PRESENCE=0.55 cab.MIC POS=0.25 doubler.ON=1 od.DRIVE=0 od.LEVEL=0.85 od.ON=1 od.TONE=0.6"),
+    ("Lead II Solo", "amp.CHANNEL=4 amp.GAIN=0.65 amp.MIDDLE=0.65 delay.DUCK=0.6 delay.FEEDBACK=0.42 delay.ON=1 delay.SPREAD=0.8 delay.TIME=0.66 od.DRIVE=0.2 od.LEVEL=0.75 od.ON=1 reverb.DECAY=0.55 reverb.MIX=0.28 reverb.ON=1"),
+    ("Aggro Lush", "amp.BASS=0.432 amp.BRIGHT=1 amp.CHANNEL=4 amp.DEPTH=0.853 amp.GAIN=0.275 amp.MASTER=0.873 amp.MIDDLE=0.532 amp.PRESENCE=1 amp.TREBLE=1 cab.DISTANCE=0.12 cab.HIGH CUT=1 cab.LOW CUT=0 cab.MIC POS=0.24 delay.ON=1 eq.125=0.433 eq.16K=0.512 eq.1K=0.568 eq.250=0.458 eq.2K=0.596 eq.4K=0.604 eq.500=0.489 eq.63=0.447 eq.8K=0.578 eq.ON=1 reverb.DECAY=0.62 reverb.MIX=0.663 reverb.ON=1 reverb.PREDELAY=0.34 reverb.SHIMMER=1 reverb.TONE=0.7"),
+    ("Fuzz Wall", "amp.GAIN=0.4 fuzz.ON=1 fuzz.SUSTAIN=0.75 fuzz.TONE=0.45 phaser.MIX=0.4 phaser.ON=1 reverb.MIX=0.25 reverb.ON=1"),
+    ("Rodent Grunge", "amp.GAIN=0.45 chorus.MIX=0.4 chorus.ON=1 chorus.RATE=0.25 dist.DIST=0.65 dist.FILTER=0.4 dist.ON=1 doubler.ON=1"),
+    ("Acoustic 1", "amp.BASS=0 amp.CHANNEL=3 amp.DEPTH=0 amp.GAIN=0.56 amp.MIDDLE=0 amp.PRESENCE=0.45 amp.TREBLE=0.73 cab.ON=0 comp.ATTACK=0.6 comp.LEVEL=0.35 comp.ON=1 comp.SUSTAIN=0.25 reverb.DECAY=0.2 reverb.MIX=0.32 reverb.MOD=0.2 reverb.ON=1 reverb.PREDELAY=0.05 reverb.SIZE=0.5"),
+    ("Acoustic 2", "amp.BASS=0.2 amp.CHANNEL=3 amp.DEPTH=0 amp.GAIN=0.85 amp.MIDDLE=0.87 amp.PRESENCE=0.36 amp.TREBLE=1 cab.ON=0 comp.ATTACK=0.6 comp.LEVEL=0.35 comp.ON=1 comp.SUSTAIN=0.25 reverb.DECAY=0.35 reverb.MIX=0.35 reverb.MOD=0.2 reverb.ON=1 reverb.PREDELAY=0.05 reverb.SIZE=0.5"),
+    ("Acoustic 3", "amp.ATTACK=1 amp.CHANNEL=3 amp.DECAY=1 amp.DEPTH=0.5 amp.DYNAMIC=1 amp.GAIN=0.5 amp.MIDDLE=0.5 amp.PRESENCE=0.4 amp.TREBLE=0.5 cab.ON=0 comp.ATTACK=0.6 comp.LEVEL=0.35 comp.ON=1 comp.SUSTAIN=0.25 reverb.DECAY=0.35 reverb.MIX=0.15 reverb.MOD=0.2 reverb.ON=1 reverb.PREDELAY=0.05 reverb.SIZE=0.5"),
+    ("Acoustic Lake", "amp.BASS=0.625 amp.BRIGHT=1 amp.CHANNEL=3 amp.DEPTH=0.8 amp.GAIN=0.763 amp.MASTER=0.458 amp.MIDDLE=0.537 amp.PRESENCE=0.678 amp.TREBLE=0.657 cab.DISTANCE=0.12 cab.HIGH CUT=1 cab.LOW CUT=0 cab.MIC POS=0.24 delay.ON=1 eq.125=0.836 eq.16K=0.794 eq.1K=0.164 eq.250=0.794 eq.2K=0.193 eq.4K=0.296 eq.500=0.675 eq.63=0.754 eq.8K=0.689 reverb.DECAY=0.62 reverb.MIX=0.663 reverb.ON=1 reverb.PREDELAY=0.34 reverb.SHIMMER=1 reverb.TONE=0.7"),
 ];
 
 /// Parses "key=value key=value"; keys may contain spaces ("cab.MIC POS"), so split on '=' boundaries.
@@ -119,3 +119,4 @@ pub fn all_names() -> Vec<String> {
 pub fn get(name: &str) -> Option<State> {
     if is_factory(name) { factory(name) } else { load_user(name) }
 }
+

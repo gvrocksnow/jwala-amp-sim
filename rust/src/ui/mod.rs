@@ -169,6 +169,23 @@ pub struct Menu {
 
 pub struct Dialog {
     pub text: String,
+    /// Caret position as a byte index into `text`, always on a char boundary.
+    pub cursor: usize,
+}
+
+impl Dialog {
+    pub fn new(text: String) -> Self {
+        let cursor = text.len();
+        Self { text, cursor }
+    }
+
+    fn prev(&self) -> usize {
+        self.text[..self.cursor].char_indices().next_back().map_or(0, |(i, _)| i)
+    }
+
+    fn next(&self) -> usize {
+        self.text[self.cursor..].chars().next().map_or(self.cursor, |c| self.cursor + c.len_utf8())
+    }
 }
 
 pub struct App {
@@ -731,7 +748,7 @@ impl App {
             }
             Hit::Save => {
                 let n = if presets::is_factory(&self.preset_name) { format!("{} (mine)", self.preset_name) } else { self.preset_name.clone() };
-                self.dialog = Some(Dialog { text: n });
+                self.dialog = Some(Dialog::new(n));
             }
             Hit::Tuner => self.set_tuner(!self.tuner_open),
             Hit::Channel(c) => {
@@ -904,10 +921,23 @@ impl App {
         }
         if let Some(d) = &mut self.dialog {
             match &ev.key {
-                Key::Character(c) => d.text.push_str(c),
-                Key::Backspace => {
-                    d.text.pop();
+                Key::Character(c) => {
+                    d.text.insert_str(d.cursor, c);
+                    d.cursor += c.len();
                 }
+                Key::Backspace => {
+                    let p = d.prev();
+                    d.text.replace_range(p..d.cursor, "");
+                    d.cursor = p;
+                }
+                Key::Delete => {
+                    let n = d.next();
+                    d.text.replace_range(d.cursor..n, "");
+                }
+                Key::ArrowLeft => d.cursor = d.prev(),
+                Key::ArrowRight => d.cursor = d.next(),
+                Key::Home => d.cursor = 0,
+                Key::End => d.cursor = d.text.len(),
                 Key::Enter => self.commit_dialog(),
                 Key::Escape => self.dialog = None,
                 _ => return false,
