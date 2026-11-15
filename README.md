@@ -89,7 +89,7 @@ Shows the note, a cents needle, a strobe and the nearest standard-tuning string.
 
 ## Presets
 
-14 factory presets: **Init, Glass Clean, Ambient Shimmer, Classic Crunch, Blues Lead, Modern Metal, Soaring Solo, Lead II Rhythm, Lead II Solo, Fuzz Wall, Rodent Grunge, Acoustic 1, Acoustic 2, Acoustic 3**.
+14 factory presets: **Init, Glass Clean, Ambient Shimmer, Classic Crunch, Blues Lead, Lead II Rhythm, Lead II Solo, Aggro Lush, Fuzz Wall, Rodent Grunge, Acoustic 1, Acoustic 2, Acoustic 3, Acoustic Lake**.
 
 **SAVE** stores your own presets as JSON in `%AppData%\Jwala\presets\`. **Ctrl+←/→** steps through presets.
 
