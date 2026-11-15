@@ -44,6 +44,7 @@ struct VOut {
 // compiler drops every other branch. GPUs barely notice; software rendering (WARP) otherwise pays
 // for all branches on every pixel.
 override KIND: f32 = 0.0;
+const LOD_SHARPEN: f32 = 0.6;
 
 const K_RRECT: f32 = 0.0;
 const K_IMAGE: f32 = 1.0;
@@ -108,8 +109,10 @@ fn rect_mask(v: VOut) -> f32 {
 @fragment
 fn fs_quad(v: VOut) -> @location(0) vec4<f32> {
     // derivatives in uniform control flow, so the branches below can sample with mipmaps
-    let dx = dpdx(v.uv);
-    let dy = dpdy(v.uv);
+    // scaled down = a mip LOD bias of about -0.7: plain trilinear picks a level too blurry next to
+    // GDI+'s HighQualityBicubic (the C# look); the Lanczos mip chain keeps that from aliasing
+    let dx = dpdx(v.uv) * LOD_SHARPEN;
+    let dy = dpdy(v.uv) * LOD_SHARPEN;
     if v.world.x < v.clip.x || v.world.y < v.clip.y || v.world.x > v.clip.z || v.world.y > v.clip.w { discard; }
     let kind = KIND;
     var col = v.color;

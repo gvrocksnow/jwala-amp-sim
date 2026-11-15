@@ -52,7 +52,8 @@ fn decode(name: &'static str, bytes: &[u8]) -> Decoded {
         if lw == 1 && lh == 1 {
             break;
         }
-        level = image::imageops::resize(&level, (lw / 2).max(1), (lh / 2).max(1), image::imageops::FilterType::Triangle);
+        // Lanczos keeps each level crisp (GDI+'s HighQualityBicubic in the C# app is the reference)
+        level = image::imageops::resize(&level, (lw / 2).max(1), (lh / 2).max(1), image::imageops::FilterType::Lanczos3);
     }
     Decoded { name, width: w, height: h, mips }
 }
