@@ -405,44 +405,163 @@ impl Rng {
     }
 }
 
-/// One synthetic performance: smoothed random drift of timing and level.
+/// One synthetic take for the doubler: a micro-pitch-shifted, retimed, decorrelated copy.
+///
+/// The read point sits `lo + u * span` samples behind the input. A constant detune makes `u`
+/// creep steadily; when it runs out of window it splices (short crossfade) to the far end at the
+/// spot where the waveform lines up best, so the splice is inaudible. Each picked note also
+/// splices the take to a fresh random position, which is what makes it early or late per note
+/// the way a second performance would be.
 struct Take {
-    cur: f64,
-    mid: f64,
-    target: f64,
+    /// +1 plays sharp, -1 flat
+    sign: f64,
+    u: f64,
+    old_u: f64,
+    /// splice crossfade progress, 1 = no splice running
+    xf: f64,
+    xf_step: f64,
+    drift: f64,
+    drift_mid: f64,
+    drift_target: f64,
     gain: f64,
     gain_target: f64,
+    tilt: f64,
+    tilt_target: f64,
     timer: f64,
-    tone: OnePole,
+    split: OnePole,
+    ap: [DelayLine; 3],
+    ap_len: [usize; 3],
     rng: Rng,
 }
 
 impl Take {
-    fn new(seed: u64) -> Self {
-        Take { cur: 0.0, mid: 0.0, target: 0.0, gain: 1.0, gain_target: 1.0, timer: 0.0, tone: OnePole::default(), rng: Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1) }
+    fn new(seed: u64, sign: f64, u: f64) -> Self {
+        Take {
+            sign,
+            u,
+            old_u: u,
+            xf: 1.0,
+            xf_step: 0.0,
+            drift: 0.0,
+            drift_mid: 0.0,
+            drift_target: 0.0,
+            gain: 1.0,
+            gain_target: 1.0,
+            tilt: 0.0,
+            tilt_target: 0.0,
+            timer: 0.0,
+            split: OnePole::default(),
+            ap: [DelayLine::new(1), DelayLine::new(1), DelayLine::new(1)],
+            ap_len: [1; 3],
+            rng: Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
+        }
     }
-    fn step(&mut self, fs: f64, slew: f64) {
+
+    fn prepare(&mut self, fs: f64, ap_ms: [f64; 3]) {
+        for k in 0..3 {
+            self.ap_len[k] = ((ap_ms[k] * fs / 1000.0) as usize).max(1);
+            self.ap[k] = DelayLine::new(self.ap_len[k] + 1);
+        }
+        self.split.set_low_pass(fs, 800.0);
+    }
+
+    /// Splice to position `u` over `1 / step` samples (ignored while a splice is still running).
+    fn jump(&mut self, u: f64, step: f64) {
+        if self.xf >= 1.0 {
+            (self.old_u, self.u, self.xf, self.xf_step) = (self.u, u, 0.0, step);
+        }
+    }
+
+    fn tick(&mut self, dl: &DelayLine, fs: f64, lo: f64, span: f64, amt: f64, slew: f64) -> f64 {
         self.timer -= 1.0;
         if self.timer <= 0.0 {
-            // a new "intention" every 120-380 ms, like a player drifting around the beat
-            self.target = self.rng.next_f64() * 2.0 - 1.0;
-            self.gain_target = 1.0 + (self.rng.next_f64() * 2.0 - 1.0) * 0.07;
+            // a new "intention" every 120-380 ms: tuning, picking strength and pick position wander
+            self.drift_target = self.rng.next_f64() * 2.0 - 1.0;
+            self.gain_target = 1.0 + (self.rng.next_f64() * 2.0 - 1.0) * 0.12 * amt;
+            self.tilt_target = (self.rng.next_f64() * 2.0 - 1.0) * 0.2 * amt;
             self.timer = fs * (0.12 + 0.26 * self.rng.next_f64());
         }
-        // two cascaded smoothers: drift rate (= pitch) changes glide, never step
-        self.mid += slew * (self.target - self.mid);
-        self.cur += slew * (self.mid - self.cur);
+        // two cascaded smoothers: the detune glides, never steps
+        self.drift_mid += slew * (self.drift_target - self.drift_mid);
+        self.drift += slew * (self.drift_mid - self.drift);
         self.gain += slew * (self.gain_target - self.gain);
+        self.tilt += slew * (self.tilt_target - self.tilt);
+
+        // AMOUNT 50% = 7 cents either side of the original, wandering by another +-1.5
+        let cents = amt * (14.0 * self.sign + 3.0 * self.drift);
+        let du = -cents * 5.7762e-4 / span; // playing sharp = the delay shrinks
+        self.u += du;
+        if self.xf < 1.0 {
+            self.old_u += du;
+            self.xf = (self.xf + self.xf_step).min(1.0);
+            self.u = self.u.clamp(0.0, 1.0);
+        } else if self.u < 0.0 || self.u > 1.0 {
+            // out of window: restart at the other end, in phase with what is playing now
+            let search = (0.5 * span).min(0.012 * fs);
+            let from = if self.u < 0.0 { lo + span - search } else { lo };
+            let to = align(dl, lo + self.u * span, from, search as usize, (0.0025 * fs) as usize);
+            self.jump(((to - lo) / span).clamp(0.0, 1.0), 1.0 / (0.012 * fs));
+        }
+
+        let mut y = dl.read(lo + self.u * span);
+        if self.xf < 1.0 {
+            let g = 0.5 - 0.5 * (PI * self.xf).cos();
+            y = y * g + dl.read(lo + self.old_u * span) * (1.0 - g);
+        }
+        // a short allpass chain (different per take) scrambles the phase, so the takes stop being
+        // copies of each other and their mono sum does not comb
+        for k in 0..3 {
+            y = allpass(&mut self.ap[k], self.ap_len[k], 0.5, y);
+        }
+        let low = self.split.low_pass(y);
+        (low * (1.0 - self.tilt) + (y - low) * (1.0 + self.tilt)) * self.gain
     }
 }
 
-/// Stereo doubler: fakes a double-tracked part. Two synthetic "takes" of the signal get their
-/// own slowly wandering timing (and therefore pitch), level and tone, then are spread left/right.
+/// The delay in `from..=from + search` whose surrounding `2 * half` samples best match those
+/// around delay `cur` (normalized correlation).
+fn align(dl: &DelayLine, cur: f64, from: f64, search: usize, half: usize) -> f64 {
+    let (c0, f0) = (cur.max(half as f64) as usize, from.max(half as f64) as usize);
+    let score = |off: usize| {
+        let (mut c, mut e) = (0.0, 1e-12);
+        let mut m = 0;
+        while m < 2 * half {
+            let a = dl.tap(f0 + off + half - m);
+            c += a * dl.tap(c0 + half - m);
+            e += a * a;
+            m += 2;
+        }
+        c / e.sqrt()
+    };
+    let (mut best, mut best_off) = (f64::MIN, 0);
+    for off in (0..=search).step_by(3) {
+        let sc = score(off);
+        if sc > best {
+            (best, best_off) = (sc, off);
+        }
+    }
+    for off in best_off.saturating_sub(2)..=(best_off + 2).min(search) {
+        let sc = score(off);
+        if sc > best {
+            (best, best_off) = (sc, off);
+        }
+    }
+    (f0 + best_off) as f64
+}
+
+/// Stereo doubler: fakes a double-tracked part. Two synthetic takes of the signal, one a few
+/// cents sharp and one a few cents flat, are retimed note by note inside the same DELAY window
+/// (so neither side leads on average and the image stays centred), given their own wandering
+/// level and tone, phase-scrambled, then spread left/right.
 pub struct Doubler {
     dl: DelayLine,
     a: Take,
     b: Take,
-    hp_b: OnePole,
+    rng: Rng,
+    span: f64,
+    env: f64,
+    env_slow: f64,
+    hold: f64,
     fs: f64,
     fade: f64,
     fade_step: f64,
@@ -450,17 +569,17 @@ pub struct Doubler {
 
 impl Doubler {
     fn new() -> Self {
-        Doubler { dl: DelayLine::new(1), a: Take::new(11), b: Take::new(23), hp_b: OnePole::default(), fs: 48000.0, fade: 0.0, fade_step: 0.0 }
+        Doubler { dl: DelayLine::new(1), a: Take::new(11, 1.0, 0.3), b: Take::new(23, -1.0, 0.7), rng: Rng(0x5DEE_CE66_D1CE_4E5B), span: 1.0, env: 0.0, env_slow: 0.0, hold: 0.0, fs: 48000.0, fade: 0.0, fade_step: 0.0 }
     }
 }
 
 impl StereoFx for Doubler {
-    fn prepare(&mut self, fs: f64, enabled: bool, _p: &[f32]) {
+    fn prepare(&mut self, fs: f64, enabled: bool, p: &[f32]) {
         self.fs = fs;
-        self.dl = DelayLine::new((fs * 0.06) as usize);
-        self.a.tone.set_low_pass(fs, 12000.0);
-        self.b.tone.set_low_pass(fs, 8500.0);
-        self.hp_b.set_low_pass(fs, 90.0);
+        self.dl = DelayLine::new((fs * 0.07) as usize);
+        self.a.prepare(fs, [0.61, 1.37, 2.29]);
+        self.b.prepare(fs, [0.77, 1.63, 2.63]);
+        self.span = doubler_delay_ms(p[1]) * fs / 1000.0;
         self.fade_step = 1.0 / (fs * 0.02);
         self.fade = if enabled { 1.0 } else { 0.0 };
     }
@@ -470,29 +589,159 @@ impl StereoFx for Doubler {
             return;
         }
         let fs = self.fs;
-        let (amt, base_b, w, mix) = (p[0] as f64, doubler_delay_ms(p[1]) * fs / 1000.0, p[2] as f64, p[3] as f64);
-        let base_a = 0.0015 * fs; // take 1 sits nearly on the original
-        let (var_a, var_b) = (amt * 0.0006 * fs, amt * 0.0016 * fs); // AMOUNT 50% ~ ±5 cents of drift
-        let slew = coef(fs, 0.22);
+        let (amt, span_to, w, mix) = (p[0] as f64, doubler_delay_ms(p[1]) * fs / 1000.0, p[2] as f64, p[3] as f64);
+        // the takes never get closer than 4 ms to the input: a note is spotted on the way in and
+        // both takes have moved to their new timing before it reaches them
+        let lo = 0.004 * fs;
+        let (slew, span_slew) = (coef(fs, 0.22), coef(fs, 0.08));
+        let (env_rel, env_slow) = (1.0 - coef(fs, 0.008), coef(fs, 0.04));
+        let spread = amt.sqrt();
+        let jump_step = 1.0 / (0.003 * fs);
         let t = if enabled { 1.0 } else { 0.0 };
         for i in 0..l.len() {
             self.fade = ramp(self.fade, t, self.fade_step);
+            self.span += span_slew * (span_to - self.span);
             let mono = 0.5 * (l[i] as f64 + r[i] as f64);
             self.dl.write(mono);
-            self.a.step(fs, slew);
-            self.b.step(fs, slew);
-            let ra = self.dl.read(base_a + var_a * (1.0 + self.a.cur));
-            let ta = self.a.tone.low_pass(ra) * self.a.gain;
-            let rb = self.dl.read(base_b + var_b * (1.0 + self.b.cur));
-            let tb_lp = self.b.tone.low_pass(rb);
-            let tb = self.hp_b.high_pass(tb_lp) * self.b.gain;
+
+            // pick attack: the level jumps well clear of its recent average
+            self.env = mono.abs().max(self.env * env_rel);
+            self.env_slow += env_slow * (self.env - self.env_slow);
+            self.hold -= 1.0;
+            if self.hold <= 0.0 && self.env > 1.8 * self.env_slow + 1e-3 {
+                self.hold = 0.07 * fs;
+                self.a.jump(0.5 + (self.rng.next_f64() - 0.5) * spread, jump_step);
+                self.b.jump(0.5 + (self.rng.next_f64() - 0.5) * spread, jump_step);
+            }
+
+            let ta = self.a.tick(&self.dl, fs, lo, self.span, amt, slew);
+            let tb = self.b.tick(&self.dl, fs, lo, self.span, amt, slew);
             let mid = 0.5 * (ta + tb);
-            // decorrelated takes sum ~3 dB lower
-            let (wl, wr) = ((mid + w * (ta - mid)) * 1.12, (mid + w * (tb - mid)) * 1.12);
+            let (wl, wr) = (mid + w * (ta - mid), mid + w * (tb - mid));
             let m = mix * self.fade;
             l[i] = (l[i] as f64 * (1.0 - m) + wl * m) as f32;
             r[i] = (r[i] as f64 * (1.0 - m) + wr * m) as f32;
         }
+    }
+}
+
+#[cfg(test)]
+mod doubler_tests {
+    use super::*;
+
+    const FS: f64 = 48000.0;
+
+    fn run(p: [f32; 4], seconds: f64, input: impl Fn(usize) -> f32) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let mut d = Doubler::new();
+        d.prepare(FS, true, &p);
+        let n = (FS * seconds) as usize;
+        let dry: Vec<f32> = (0..n).map(&input).collect();
+        let (mut l, mut r) = (dry.clone(), dry.clone());
+        for (a, b) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
+            d.process(a, b, &p, true);
+        }
+        (dry, l, r)
+    }
+
+    fn rms(x: &[f32]) -> f64 {
+        (x.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / x.len() as f64).sqrt()
+    }
+
+    /// A new plucked note (a few decaying harmonics) every 230 ms, walking over a scale.
+    fn plucks(i: usize) -> f32 {
+        let period = (0.23 * FS) as usize;
+        let (note, k) = (i / period, (i % period) as f64 / FS);
+        let f = 110.0 * 2f64.powf([0.0, 3.0, 5.0, 7.0, 10.0, 12.0, 15.0][note % 7] / 12.0);
+        let mut y = 0.0;
+        for h in 1..=6 {
+            y += (2.0 * PI * f * h as f64 * k).sin() / h as f64 * (-k * (3.0 + 2.0 * h as f64)).exp();
+        }
+        (0.3 * y) as f32
+    }
+
+    fn up_crossings(x: &[f32]) -> usize {
+        x.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count()
+    }
+
+    /// Loudness matches the dry signal, the sides are balanced, the mono sum keeps its body.
+    #[test]
+    fn level_balance_and_mono() {
+        let (dry, l, r) = run([0.5, 0.35, 1.0, 1.0], 8.0, plucks);
+        assert!(l.iter().chain(&r).all(|v| v.is_finite()));
+        let (d, a, b) = (rms(&dry), rms(&l), rms(&r));
+        let mono: Vec<f32> = l.iter().zip(&r).map(|(x, y)| 0.5 * (x + y)).collect();
+        println!("dry {d:.4} l {a:.4} r {b:.4} mono {:.4}", rms(&mono));
+        assert!((20.0 * (a / d).log10()).abs() < 1.5 && (20.0 * (b / d).log10()).abs() < 1.5, "level {d} -> {a} / {b}");
+        assert!((20.0 * (a / b).log10()).abs() < 0.8, "unbalanced: {a} vs {b}");
+        assert!(rms(&mono) > 0.6 * d, "mono sum is hollow: {} of {d}", rms(&mono));
+    }
+
+    /// One take plays steadily sharp and the other steadily flat, splices included.
+    #[test]
+    fn takes_are_detuned_either_way() {
+        let (_, l, r) = run([0.5, 0.35, 1.0, 1.0], 9.0, |i| (0.3 * (2.0 * PI * 1000.0 * i as f64 / FS).sin()) as f32);
+        let (from, secs) = (FS as usize, 8.0);
+        let (fl, fr) = (up_crossings(&l[from..]) as f64 / secs, up_crossings(&r[from..]) as f64 / secs);
+        println!("left {fl} Hz, right {fr} Hz");
+        // 7 +- 1.5 cents at 1 kHz = 3.2 to 4.9 Hz
+        assert!(fl > 1002.5 && fl < 1006.0, "left at {fl} Hz");
+        assert!(fr < 997.5 && fr > 994.0, "right at {fr} Hz");
+    }
+
+    /// The splice at the end of the window lands in phase: a steady tone stays steady.
+    #[test]
+    fn splices_are_clean() {
+        let (_, l, _) = run([1.0, 0.0, 1.0, 1.0], 6.0, |i| (0.3 * (2.0 * PI * 440.0 * i as f64 / FS).sin()) as f32);
+        // AMOUNT 100% on a 6 ms window splices about every 0.75 s
+        let levels: Vec<f64> = l[FS as usize..].chunks_exact(480).map(rms).collect();
+        let (lo, hi) = levels.iter().fold((f64::MAX, 0.0f64), |(a, b), v| (a.min(*v), b.max(*v)));
+        println!("splice level {lo} .. {hi}");
+        assert!(lo > 0.7 * hi, "level dips at a splice: {lo} vs {hi}");
+    }
+
+    /// Each note lands at its own time inside the DELAY window, and neither side leads on average.
+    #[test]
+    fn notes_are_retimed() {
+        let gap = (0.3 * FS) as usize;
+        let p = [0.5, 0.35, 1.0, 1.0];
+        let (_, l, r) = run(p, 12.0, |i| if i % gap == 0 { 0.5 } else { 0.0 });
+        let arrival = |x: &[f32]| -> Vec<f64> {
+            x.chunks_exact(gap).map(|c| (0..gap).max_by(|&a, &b| c[a].abs().total_cmp(&c[b].abs())).unwrap() as f64 * 1000.0 / FS).collect()
+        };
+        let (al, ar) = (arrival(&l), arrival(&r));
+        println!("left {al:.1?}\nright {ar:.1?}");
+        let window = 4.0 + doubler_delay_ms(p[1]) + 3.0; // + the allpass chain
+        for v in al.iter().chain(&ar) {
+            assert!(*v >= 4.0 && *v <= window, "note arrived at {v} ms");
+        }
+        let range = |v: &[f64]| v.iter().fold(0.0f64, |m, x| m.max(*x)) - v.iter().fold(f64::MAX, |m, x| m.min(*x));
+        assert!(range(&al) > 2.0 && range(&ar) > 2.0, "timing does not vary: {al:?}");
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        assert!((mean(&al) - mean(&ar)).abs() < 2.5, "one side leads: {} vs {} ms", mean(&al), mean(&ar));
+        let left_first = al.iter().zip(&ar).filter(|(a, b)| a < b).count();
+        assert!(left_first > al.len() / 5 && left_first < al.len() * 4 / 5, "left first {left_first} of {}", al.len());
+    }
+
+    /// The two sides are different signals at full WIDTH and the same signal at none.
+    #[test]
+    fn width_decorrelates() {
+        let corr = |l: &[f32], r: &[f32]| l.iter().zip(r).map(|(a, b)| (*a * *b) as f64).sum::<f64>() / (rms(l) * rms(r) * l.len() as f64);
+        let (_, l, r) = run([0.5, 0.35, 1.0, 1.0], 8.0, plucks);
+        println!("correlation {}", corr(&l, &r));
+        assert!(corr(&l, &r).abs() < 0.5, "sides correlate: {}", corr(&l, &r));
+        let (_, l, r) = run([0.5, 0.35, 0.0, 1.0], 2.0, plucks);
+        assert!(l.iter().zip(&r).all(|(a, b)| (a - b).abs() < 1e-6));
+    }
+
+    #[test]
+    fn bypassed_is_untouched() {
+        let p = [0.5, 0.35, 1.0, 1.0];
+        let mut d = Doubler::new();
+        d.prepare(FS, false, &p);
+        let dry: Vec<f32> = (0..4800).map(plucks).collect();
+        let (mut l, mut r) = (dry.clone(), dry.clone());
+        d.process(&mut l, &mut r, &p, false);
+        assert!(l == dry && r == dry);
     }
 }
 
