@@ -1091,10 +1091,11 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
     let fs = app.shared.sample_rate.load(Ordering::Relaxed) as f64;
     let fs = if fs > 0.0 { fs } else { 48000.0 };
     let n = 180;
+    let resp = crate::dsp::eq::response(&vals, fs);
     let pts: Vec<(f32, f32)> = (0..=n)
         .map(|k| {
             let f = 20.0 * 1000f64.powf(k as f64 / n as f64);
-            (fx(f), dy(crate::dsp::eq::response_db(&vals, fs, f.min(0.499 * fs)).clamp(-40.0, 40.0)))
+            (fx(f), dy(resp(f.min(0.499 * fs)).clamp(-40.0, 40.0)))
         })
         .collect();
     // a soft amber glow round a pale core, like the concept's display

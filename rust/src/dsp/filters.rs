@@ -84,6 +84,36 @@ impl Biquad {
         self.set(1.0 + al * a, -2.0 * c, 1.0 - al * a, 1.0 + al / a, -2.0 * c, 1.0 - al / a);
     }
 
+    /// Peaking bell matched to the analog prototype (Vicanek, "Matched Second Order Digital
+    /// Filters", 2016): impulse-invariant poles, zeros solved so the gain is exactly `db` at `f`
+    /// with the peak sitting there. Unlike the bilinear `peak`, bells near Nyquist keep their
+    /// analog width and shape instead of being squeezed, so the top bands stay open and airy.
+    pub fn peak_matched(&mut self, fs: f64, f: f64, q: f64, db: f64) {
+        let g = 10f64.powf(db / 20.0);
+        let w = 2.0 * PI * f / fs;
+        // RBJ-symmetric prototype: pole Q = Q·√G, so boosts and cuts mirror each other
+        let z = 1.0 / (2.0 * q * g.sqrt());
+        let e = (-z * w).exp();
+        let a1 = if z <= 1.0 { -2.0 * e * ((1.0 - z * z).sqrt() * w).cos() } else { -2.0 * e * ((z * z - 1.0).sqrt() * w).cosh() };
+        let a2 = e * e;
+        let (ca0, ca1, ca2) = ((1.0 + a1 + a2).powi(2), (1.0 - a1 + a2).powi(2), -4.0 * a2);
+        let p1 = (w / 2.0).sin().powi(2);
+        let p0 = 1.0 - p1;
+        let p2 = 4.0 * p0 * p1;
+        let g2 = g * g;
+        let r1 = (ca0 * p0 + ca1 * p1 + ca2 * p2) * g2;
+        let r2 = (-ca0 + ca1 + 4.0 * (p0 - p1) * ca2) * g2;
+        let cb0 = ca0;
+        let cb2 = (r1 - r2 * p1 - cb0) / (4.0 * p1 * p1);
+        let cb1 = r2 + cb0 + 4.0 * (p1 - p0) * cb2;
+        let (s0, s1) = (cb0.sqrt(), cb1.max(0.0).sqrt());
+        let wq = 0.5 * (s0 + s1);
+        let b0 = 0.5 * (wq + (wq * wq + cb2).max(0.0).sqrt());
+        let b1 = 0.5 * (s0 - s1);
+        let b2 = -cb2 / (4.0 * b0);
+        self.set(b0, b1, b2, 1.0, a1, a2);
+    }
+
     pub fn low_shelf(&mut self, fs: f64, f: f64, db: f64) {
         let a = 10f64.powf(db / 40.0);
         let w = 2.0 * PI * f / fs;
