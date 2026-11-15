@@ -10,24 +10,24 @@ namespace Jwala.UI;
 
 static class Theme
 {
-    public static readonly Color Back = Color.FromArgb(24, 21, 19), Field = Color.FromArgb(40, 36, 32), Text = Color.FromArgb(235, 225, 205), Gold = Color.FromArgb(214, 178, 96);
+    public static readonly Color Back = Color.FromArgb(22, 22, 25), Field = Color.FromArgb(37, 37, 40), Text = Color.FromArgb(235, 225, 205), Accent = Color.FromArgb(228, 230, 236);
 
-    public static Label Label(string t, bool gold = false) => new() { Text = t, AutoSize = true, ForeColor = gold ? Gold : Text, Font = new Font("Segoe UI", 9f, gold ? FontStyle.Bold : FontStyle.Regular), Margin = new Padding(3, 8, 3, 3) };
+    public static Label Label(string t, bool gold = false) => new() { Text = t, AutoSize = true, ForeColor = gold ? Accent : Text, Font = new Font("Segoe UI", 9f, gold ? FontStyle.Bold : FontStyle.Regular), Margin = new Padding(3, 8, 3, 3) };
     public static ComboBox Combo() => new() { Width = 330, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Field, ForeColor = Text, Font = new Font("Segoe UI", 9f) };
-    public static Button Button(string t) => new() { Text = t, AutoSize = true, FlatStyle = FlatStyle.Flat, BackColor = Field, ForeColor = Text, Font = new Font("Segoe UI", 9f), Padding = new Padding(6, 2, 6, 2), FlatAppearance = { BorderColor = Color.FromArgb(90, 78, 60) } };
+    public static Button Button(string t) => new() { Text = t, AutoSize = true, FlatStyle = FlatStyle.Flat, BackColor = Field, ForeColor = Text, Font = new Font("Segoe UI", 9f), Padding = new Padding(6, 2, 6, 2), FlatAppearance = { BorderColor = Color.FromArgb(79, 79, 82) } };
 
     /// <summary>Dark colours for context menus.</summary>
     public sealed class MenuColors : ProfessionalColorTable
     {
-        public override Color ToolStripDropDownBackground => Color.FromArgb(30, 27, 24);
-        public override Color ImageMarginGradientBegin => Color.FromArgb(30, 27, 24);
-        public override Color ImageMarginGradientMiddle => Color.FromArgb(30, 27, 24);
-        public override Color ImageMarginGradientEnd => Color.FromArgb(30, 27, 24);
-        public override Color MenuItemSelected => Color.FromArgb(70, 58, 36);
-        public override Color MenuItemBorder => Gold;
-        public override Color MenuBorder => Color.FromArgb(80, 70, 56);
-        public override Color SeparatorDark => Color.FromArgb(70, 62, 52);
-        public override Color SeparatorLight => Color.FromArgb(30, 27, 24);
+        public override Color ToolStripDropDownBackground => Color.FromArgb(27, 27, 30);
+        public override Color ImageMarginGradientBegin => Color.FromArgb(27, 27, 30);
+        public override Color ImageMarginGradientMiddle => Color.FromArgb(27, 27, 30);
+        public override Color ImageMarginGradientEnd => Color.FromArgb(27, 27, 30);
+        public override Color MenuItemSelected => Color.FromArgb(58, 58, 61);
+        public override Color MenuItemBorder => Accent;
+        public override Color MenuBorder => Color.FromArgb(71, 71, 74);
+        public override Color SeparatorDark => Color.FromArgb(63, 63, 66);
+        public override Color SeparatorLight => Color.FromArgb(27, 27, 30);
     }
 }
 
@@ -67,7 +67,7 @@ sealed class SettingsForm : Form
         Controls.Add(t);
         AcceptButton = btnOk; CancelButton = btnCancel;
         btnOk.DialogResult = DialogResult.OK; btnCancel.DialogResult = DialogResult.Cancel;
-        btnOk.BackColor = Color.FromArgb(70, 56, 30);
+        btnOk.BackColor = Color.FromArgb(56, 56, 59);
 
         cbDriver.Items.AddRange(new object[] { "ASIO (lowest latency)", "WASAPI (Windows audio)", "DI File (play a recording)" });
         cbDriver.SelectedIndexChanged += (_, _) => { if (!loading) { s.Driver = (DriverType)cbDriver.SelectedIndex; Refill(); } };

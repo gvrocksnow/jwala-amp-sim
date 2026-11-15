@@ -29,7 +29,7 @@ sealed class HeaderBar : WidgetSurface
 
     static readonly string[] Pages = { "PEDALS", "AMP", "CAB", "EQ", "EFFECTS" };
 
-    public HeaderBar(RigModel m) { this.m = m; Height = (int)MathF.Round((Row1 + Row2) * UiScale); BackColor = Color.FromArgb(16, 14, 12); }
+    public HeaderBar(RigModel m) { this.m = m; Height = (int)MathF.Round((Row1 + Row2) * UiScale); BackColor = Color.FromArgb(14, 14, 17); }
 
     protected override void Arrange(Rectangle r)
     {
@@ -59,12 +59,12 @@ sealed class HeaderBar : WidgetSurface
             OnPaint = (g, b, hot, _) =>
             {
                 using var path = Gfx.Round(b, 6);
-                using (var bg = new SolidBrush(hot ? Color.FromArgb(44, 40, 36) : Color.FromArgb(30, 27, 24))) g.FillPath(bg, path);
-                using (var pen = new Pen(Color.FromArgb(110, Gfx.Gold), 1)) g.DrawPath(pen, path);
+                using (var bg = new SolidBrush(hot ? Color.FromArgb(41, 41, 44) : Color.FromArgb(27, 27, 30))) g.FillPath(bg, path);
+                using (var pen = new Pen(Color.FromArgb(110, Gfx.Accent), 1)) g.DrawPath(pen, path);
                 using var f = new Font("Segoe UI", 10.5f, FontStyle.Bold);
                 using var tb = new SolidBrush(Gfx.Text);
                 g.DrawString(PresetName(), f, tb, new RectangleF(b.X + 10, b.Y, b.Width - 34, b.Height), Gfx.Format(StringAlignment.Center, StringAlignment.Center, true, StringTrimming.EllipsisCharacter));
-                using var ab = new SolidBrush(Gfx.Gold);
+                using var ab = new SolidBrush(Gfx.Accent);
                 Gfx.DrawText(g, "▾", f, ab, new RectangleF(b.Right - 26, b.Y, 20, b.Height));
             },
             OnDown = (_, _) => PresetMenu?.Invoke(new RectangleF(cx - 152, 49, 304, 0)),
@@ -89,10 +89,10 @@ sealed class HeaderBar : WidgetSurface
     {
         bool active = Page == idx && !TunerOn();
         using var path = Gfx.Round(b, 6);
-        using (var bg = new SolidBrush(active ? Color.FromArgb(58, 48, 30) : hot ? Color.FromArgb(38, 34, 30) : Color.FromArgb(26, 23, 20))) g.FillPath(bg, path);
-        using (var pen = new Pen(active ? Gfx.Gold : Color.FromArgb(60, 54, 46), active ? 1.5f : 1)) g.DrawPath(pen, path);
+        using (var bg = new SolidBrush(active ? Color.FromArgb(48, 48, 51) : hot ? Color.FromArgb(35, 35, 38) : Color.FromArgb(23, 23, 26))) g.FillPath(bg, path);
+        using (var pen = new Pen(active ? Gfx.Accent : Color.FromArgb(55, 55, 58), active ? 1.5f : 1)) g.DrawPath(pen, path);
         using var f = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        using var tb = new SolidBrush(active ? Color.FromArgb(255, 230, 170) : Gfx.Text);
+        using var tb = new SolidBrush(active ? Color.FromArgb(255, 255, 255) : Gfx.Text);
         g.DrawString(Pages[idx], f, tb, new RectangleF(b.X, b.Y + 2, b.Width, b.Height / 2), Gfx.CenterNoWrap);
 
         // mini chain status under the label
@@ -104,7 +104,7 @@ sealed class HeaderBar : WidgetSurface
             const float bw = 7;
             float start = b.X + (b.Width - bw * EqParams.Bands) / 2, mid = sub.Y + sub.Height / 2, half = sub.Height / 2 - 3;
             using (var axis = new SolidBrush(Color.FromArgb(50, 255, 255, 255))) g.FillRectangle(axis, start, mid - 0.5f, bw * EqParams.Bands, 1);
-            using var bar = new SolidBrush(Color.FromArgb(220, 255, 120, 40));
+            using var bar = new SolidBrush(Color.FromArgb(220, 236, 238, 244));
             for (int i = 0; i < EqParams.Bands; i++)
             {
                 float d = (m.Eq.Knobs[i].Value - 0.5f) * 2 * half;
@@ -125,7 +125,7 @@ sealed class HeaderBar : WidgetSurface
             {
                 var d = new RectangleF(start + i * dw + 3, sub.Y + 3, dw - 6, sub.Height - 6);
                 using var dp = Gfx.Round(d, 3);
-                using var db = new SolidBrush(fx[i].Enabled ? Color.FromArgb(200, 255, 120, 40) : Color.FromArgb(50, 255, 255, 255));
+                using var db = new SolidBrush(fx[i].Enabled ? Color.FromArgb(200, 236, 238, 244) : Color.FromArgb(50, 255, 255, 255));
                 g.FillPath(db, dp);
             }
         }
@@ -150,7 +150,7 @@ sealed class HeaderBar : WidgetSurface
             using var glow = new PathGradientBrush(gp) { CenterColor = Color.FromArgb(90, c), SurroundColors = new[] { Color.FromArgb(0, c) } };
             g.FillEllipse(glow, gr);
         }
-        using (var bg = new SolidBrush(hot ? Color.FromArgb(50, 46, 42) : Color.FromArgb(32, 29, 26))) g.FillEllipse(bg, b);
+        using (var bg = new SolidBrush(hot ? Color.FromArgb(47, 47, 50) : Color.FromArgb(29, 29, 32))) g.FillEllipse(bg, b);
         using var pen = new Pen(c, 2.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         var ir = RectangleF.Inflate(b, -9, -9);
         g.DrawArc(pen, ir, -60, 300);
@@ -159,7 +159,7 @@ sealed class HeaderBar : WidgetSurface
 
     void PaintGear(Graphics g, RectangleF b, bool hot, bool pressed)
     {
-        using (var bg = new SolidBrush(hot ? Color.FromArgb(50, 46, 42) : Color.FromArgb(32, 29, 26))) g.FillEllipse(bg, b);
+        using (var bg = new SolidBrush(hot ? Color.FromArgb(47, 47, 50) : Color.FromArgb(29, 29, 32))) g.FillEllipse(bg, b);
         using var f = new Font("Segoe UI Symbol", 14f);
         using var tb = new SolidBrush(Gfx.Text);
         g.DrawString("⚙", f, tb, b, Gfx.Center);
@@ -182,10 +182,10 @@ sealed class HeaderBar : WidgetSurface
     protected override void PaintStatic(Graphics g)
     {
         var r = View;
-        using (var bg = new LinearGradientBrush(new Rectangle(0, 0, r.Width, Row1), Color.FromArgb(34, 30, 27), Color.FromArgb(18, 16, 14), 90f))
+        using (var bg = new LinearGradientBrush(new Rectangle(0, 0, r.Width, Row1), Color.FromArgb(31, 31, 34), Color.FromArgb(16, 16, 19), 90f))
             g.FillRectangle(bg, 0, 0, r.Width, Row1);
         using (var bg2 = new SolidBrush(Color.FromArgb(12, 11, 10))) g.FillRectangle(bg2, 0, Row1, r.Width, Row2);
-        using (var line = new Pen(Color.FromArgb(70, Gfx.Gold))) { g.DrawLine(line, 0, Row1, r.Width, Row1); g.DrawLine(line, 0, r.Height - 1, r.Width, r.Height - 1); }
+        using (var line = new Pen(Color.FromArgb(70, Gfx.Accent))) { g.DrawLine(line, 0, Row1, r.Width, Row1); g.DrawLine(line, 0, r.Height - 1, r.Width, r.Height - 1); }
         Gfx.Logo(g, new RectangleF(14, 6, 260, 52), 20, StringAlignment.Near);
         PaintVersion(g);
 
@@ -199,7 +199,7 @@ sealed class HeaderBar : WidgetSurface
 
         // arrows between the chain tabs
         using var af = new Font("Segoe UI", 12f, FontStyle.Bold);
-        using var ab = new SolidBrush(Color.FromArgb(120, Gfx.Gold));
+        using var ab = new SolidBrush(Color.FromArgb(120, Gfx.Accent));
         var tabs = W.Where(w => w is CustomWidget && w.Bounds.Y > Row1).ToList();
         for (int i = 0; i + 1 < tabs.Count; i++)
             g.DrawString("→", af, ab, new RectangleF(tabs[i].Bounds.Right, tabs[i].Bounds.Y, tabs[i + 1].Bounds.X - tabs[i].Bounds.Right, tabs[i].Bounds.Height), Gfx.Center);

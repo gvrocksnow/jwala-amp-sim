@@ -24,7 +24,7 @@ static class Assets
 
 static class Gfx
 {
-    public static readonly Color Gold = Color.FromArgb(214, 178, 96);
+    public static readonly Color Accent = Color.FromArgb(228, 230, 236);
     public static readonly Color Text = Color.FromArgb(235, 225, 205);
     public static readonly Color Dim = Color.FromArgb(150, 140, 125);
 
@@ -74,7 +74,7 @@ static class Gfx
         var sf = new StringFormat { Alignment = align, LineAlignment = StringAlignment.Center };
         using (var sh = new SolidBrush(Color.FromArgb(170, 0, 0, 0)))
             g.DrawString("Jwala", f, sh, new RectangleF(r.X + size / 14, r.Y + size / 11, r.Width, r.Height), sf);
-        using var gb = new LinearGradientBrush(r, Color.FromArgb(255, 240, 200), Color.FromArgb(176, 128, 52), 90f);
+        using var gb = new LinearGradientBrush(r, Color.FromArgb(255, 255, 255), Color.FromArgb(150, 153, 162), 90f);
         g.DrawString("Jwala", f, gb, r, sf);
     }
 
@@ -113,7 +113,7 @@ static class Gfx
     public static void Meter(Graphics g, RectangleF r, float peak)
     {
         float db = 20 * MathF.Log10(peak + 1e-6f);
-        using (var bg = new SolidBrush(Color.FromArgb(14, 12, 10))) g.FillRectangle(bg, r);
+        using (var bg = new SolidBrush(Color.FromArgb(12, 12, 15))) g.FillRectangle(bg, r);
         const int segs = 16;
         bool vertical = r.Height > r.Width;
         float len = (vertical ? r.Height : r.Width) - 2, sl = len / segs;
@@ -213,7 +213,7 @@ sealed class KnobWidget : Widget
     public Color Pointer = Color.FromArgb(250, 248, 240);
     /// <summary>The page bakes this knob's shadow into its background layer (SoftShadows), so draw none.</summary>
     public bool ShadowBaked;
-    public bool Ticks; public Color TickColor = Color.FromArgb(40, 24, 8);
+    public bool Ticks; public Color TickColor = Color.FromArgb(26, 26, 29);
     PointF start; float startVal; bool dragging;
 
     public KnobWidget(Param p, Image img) { P = p; Img = img; }
@@ -254,7 +254,7 @@ sealed class KnobWidget : Widget
             var rr = new RectangleF(cx - tw / 2 - 5, b.Bottom + 4, tw + 10, 17);
             using var bg = new SolidBrush(Color.FromArgb(dragging ? 235 : 190, 18, 15, 12));
             using var rp = Gfx.Round(rr, 5); g.FillPath(bg, rp);
-            using var tb = new SolidBrush(Gfx.Gold);
+            using var tb = new SolidBrush(Gfx.Accent);
             g.DrawString(txt, f, tb, rr, Gfx.CenterNoWrap);
         }
     }
@@ -285,7 +285,7 @@ sealed class SwitchWidget : Widget
     {
         var r = Bounds; bool on = Get();
         using var path = Gfx.Round(r, 5);
-        using (var bg = new LinearGradientBrush(r, on ? Color.FromArgb(66, 58, 48) : hot ? Color.FromArgb(46, 41, 36) : Color.FromArgb(34, 30, 26), Color.FromArgb(12, 10, 8), 90f))
+        using (var bg = new LinearGradientBrush(r, on ? Color.FromArgb(59, 59, 62) : hot ? Color.FromArgb(42, 42, 45) : Color.FromArgb(31, 31, 34), Color.FromArgb(10, 10, 13), 90f))
             g.FillPath(bg, path);
         using (var pen = new Pen(on ? Color.FromArgb(120, LedColor) : Color.FromArgb(140, 0, 0, 0), 1.2f)) g.DrawPath(pen, path);
         Gfx.Led(g, new RectangleF(r.X + 8, r.Y + r.Height / 2 - 3.5f, 7, 7), on, LedColor);
@@ -305,11 +305,11 @@ sealed class ButtonWidget : Widget
     {
         var r = Bounds; bool on = Active();
         using var path = Gfx.Round(r, 5);
-        using (var bg = new SolidBrush(pressed ? Color.FromArgb(70, 62, 50) : on ? Color.FromArgb(78, 64, 36) : hot ? Color.FromArgb(56, 50, 44) : Color.FromArgb(40, 36, 32)))
+        using (var bg = new SolidBrush(pressed ? Color.FromArgb(63, 63, 66) : on ? Color.FromArgb(64, 64, 67) : hot ? Color.FromArgb(51, 51, 54) : Color.FromArgb(37, 37, 40)))
             g.FillPath(bg, path);
-        using (var pen = new Pen(on ? Gfx.Gold : Color.FromArgb(80, 72, 60), 1)) g.DrawPath(pen, path);
+        using (var pen = new Pen(on ? Gfx.Accent : Color.FromArgb(73, 73, 76), 1)) g.DrawPath(pen, path);
         using var f = new Font("Segoe UI", FontSize, Bold ? FontStyle.Bold : FontStyle.Regular);
-        using var tb = new SolidBrush(on ? Color.FromArgb(255, 230, 170) : Gfx.Text);
+        using var tb = new SolidBrush(on ? Color.FromArgb(255, 255, 255) : Gfx.Text);
         Gfx.DrawText(g, Text, f, tb, r);
     }
     public override void Down(MouseEventArgs e, WidgetSurface s) { Click(s, Bounds); s.Changed(this); }

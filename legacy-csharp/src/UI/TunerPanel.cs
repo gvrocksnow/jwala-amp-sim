@@ -51,7 +51,7 @@ sealed class TunerPanel : WidgetSurface
         using (var dark = new SolidBrush(Color.FromArgb(205, 6, 5, 4))) g.FillRectangle(dark, r);
         Gfx.Vignette(g, r, 200);
         using var hf = new Font("Segoe UI", 15f, FontStyle.Bold);
-        using var gold = new SolidBrush(Color.FromArgb(220, Gfx.Gold));
+        using var gold = new SolidBrush(Color.FromArgb(220, Gfx.Accent));
         g.DrawString("TUNER", hf, gold, 28, 18, Gfx.Typo);
         using var sf = new Font("Segoe UI", 9f);
         using var dim = new SolidBrush(Color.FromArgb(160, 230, 220, 200));
@@ -76,8 +76,8 @@ sealed class TunerPanel : WidgetSurface
 
         // strobe frame
         using var sp = Gfx.Round(strobe, 6);
-        using (var sb = new SolidBrush(Color.FromArgb(18, 16, 14))) g.FillPath(sb, sp);
-        using (var pen = new Pen(Color.FromArgb(80, Gfx.Gold))) g.DrawPath(pen, sp);
+        using (var sb = new SolidBrush(Color.FromArgb(16, 16, 19))) g.FillPath(sb, sp);
+        using (var pen = new Pen(Color.FromArgb(80, Gfx.Accent))) g.DrawPath(pen, sp);
     }
 
     protected override void PaintOverlay(Graphics g)

@@ -11,7 +11,7 @@ namespace Jwala.UI;
 sealed class EqPage : WidgetSurface
 {
     static readonly Color Slate = Color.FromArgb(42, 45, 50);
-    static readonly Color Amber = Color.FromArgb(255, 186, 84), Core = Color.FromArgb(255, 224, 170);
+    static readonly Color Glow = Color.FromArgb(225, 230, 242), Core = Color.FromArgb(255, 255, 255);
     /// <summary>eq_panel.png: width / height.</summary>
     const float Aspect = 2.3309f;
     /// <summary>Inside the display's bezel, as fractions of the panel: x0, y0, x1, y1.</summary>
@@ -55,7 +55,7 @@ sealed class EqPage : WidgetSurface
         y0 = vy + 28; y1 = ny - 12;
 
         // EQ ON and FLAT, top right above the unit
-        W.Add(new SwitchWidget { Bounds = new RectangleF(unit.Right - 84, 22, 84, 28), Text = "EQ ON", Get = () => p.Enabled, Click = () => p.Enabled = !p.Enabled, LedColor = Color.FromArgb(255, 150, 50) });
+        W.Add(new SwitchWidget { Bounds = new RectangleF(unit.Right - 84, 22, 84, 28), Text = "EQ ON", Get = () => p.Enabled, Click = () => p.Enabled = !p.Enabled, LedColor = Color.FromArgb(236, 240, 248) });
         W.Add(new ButtonWidget
         {
             Bounds = new RectangleF(unit.Right - 160, 22, 64, 28), Text = "FLAT", FontSize = 8,
@@ -84,7 +84,7 @@ sealed class EqPage : WidgetSurface
         var clip = g.Clip;
         g.SetClip(RectangleF.Inflate(scr, -3, -3), CombineMode.Intersect);
         // a soft amber glow round a pale core, like the concept's display
-        var passes = p.Enabled ? new[] { (14f, Color.FromArgb(18, Amber)), (6f, Color.FromArgb(60, Amber)), (2.2f, Core) }
+        var passes = p.Enabled ? new[] { (14f, Color.FromArgb(18, Glow)), (6f, Color.FromArgb(60, Glow)), (2.2f, Core) }
                                : new[] { (2f, Color.FromArgb(150, Gfx.Dim)) };
         foreach (var (w, c) in passes)
         {
@@ -145,7 +145,7 @@ sealed class EqPage : WidgetSurface
         foreach (int d in new[] { -12, -6, 0, 6, 12 })
             Gfx.DrawText(g, d == 0 ? "0 dB" : d.ToString("+0;-0"), scaleFont, dim, new RectangleF(left - 46, Ty(0.5f + d / (2f * (float)EqParams.RangeDb)) - 6, 38, 12), 1);
         using var nameFont = new Font("Arial", 7f, FontStyle.Bold);
-        using var gold = new SolidBrush(Gfx.Gold);
+        using var gold = new SolidBrush(Gfx.Accent);
         for (int i = 0; i < p.Knobs.Length; i++)
         {
             bool level = i == EqParams.Bands;
@@ -175,7 +175,7 @@ sealed class EqPage : WidgetSurface
 sealed class FaderWidget : Widget
 {
     public const float ThumbH = 20;
-    static readonly Color Amber = Color.FromArgb(255, 186, 84);
+    static readonly Color Glow = Color.FromArgb(225, 230, 242);
     public readonly Param P;
     readonly float cx, sw, y0, y1, vy;
     readonly Func<bool> on;
@@ -197,7 +197,7 @@ sealed class FaderWidget : Widget
         if (on() && Math.Abs(yt - ym) > 0.5f)
         {
             using var fill = Gfx.Round(new RectangleF(cx - 2, Math.Min(ym, yt), 4, Math.Abs(yt - ym)), 2);
-            using var b = new SolidBrush(Color.FromArgb(200, Amber)); g.FillPath(b, fill);
+            using var b = new SolidBrush(Color.FromArgb(200, Glow)); g.FillPath(b, fill);
         }
         float tw = Math.Clamp(sw * 0.6f, 26, 46);
         var thumb = new RectangleF(cx - tw / 2, yt - ThumbH / 2, tw, ThumbH);
@@ -206,12 +206,12 @@ sealed class FaderWidget : Widget
         using (var tp = Gfx.Round(thumb, 4))
         {
             using (var grad = new LinearGradientBrush(RectangleF.Inflate(thumb, 0, 1), Color.FromArgb(214, 208, 196), Color.FromArgb(108, 102, 94), 90f)) g.FillPath(grad, tp);
-            using var pen = new Pen(hot || pressed ? Gfx.Gold : Color.FromArgb(160, 0, 0, 0), 1); g.DrawPath(pen, tp);
+            using var pen = new Pen(hot || pressed ? Gfx.Accent : Color.FromArgb(160, 0, 0, 0), 1); g.DrawPath(pen, tp);
         }
-        using (var grip = new SolidBrush(on() ? Color.FromArgb(40, 30, 20) : Color.FromArgb(70, 66, 60)))
+        using (var grip = new SolidBrush(on() ? Color.FromArgb(32, 32, 35) : Color.FromArgb(66, 66, 69)))
             g.FillRectangle(grip, thumb.X + 4, thumb.Y + ThumbH / 2 - 1, tw - 8, 2);
         using var f = new Font("Segoe UI", 7.5f, FontStyle.Bold);
-        using var tb = new SolidBrush(hot || pressed ? Gfx.Gold : Gfx.Text);
+        using var tb = new SolidBrush(hot || pressed ? Gfx.Accent : Gfx.Text);
         Gfx.DrawText(g, P.Display, f, tb, new RectangleF(cx - sw / 2, vy, sw, 14));
     }
 

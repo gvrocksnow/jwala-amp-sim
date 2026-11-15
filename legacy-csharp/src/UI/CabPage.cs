@@ -103,7 +103,7 @@ sealed class CabPage : WidgetSurface
         {
             float cx = p.X + 20 + gx * (i % 2) + gx / 2, cy = p.Y + 322 + (i / 2) * 124;
             if (cy + ks / 2 > p.Bottom - 30) cy = p.Bottom - 30 - ks / 2;
-            var kw = new KnobWidget(knobs[i], Assets.Image("knob.png")) { Bounds = new RectangleF(cx - ks / 2, cy - ks / 2, ks, ks), Ticks = true, TickColor = Color.FromArgb(150, 214, 178, 96) };
+            var kw = new KnobWidget(knobs[i], Assets.Image("knob.png")) { Bounds = new RectangleF(cx - ks / 2, cy - ks / 2, ks, ks), Ticks = true, TickColor = Color.FromArgb(150, Gfx.Accent) };
             W.Add(kw);
         }
     }
@@ -200,11 +200,11 @@ sealed class CabPage : WidgetSurface
         if (hot)
         {
             float d = mic.Height * 1.05f;
-            using var pen = new Pen(Color.FromArgb(180, Gfx.Gold), 2);
+            using var pen = new Pen(Color.FromArgb(180, Gfx.Accent), 2);
             g.DrawEllipse(pen, mic.X + mic.Width * MicHead.X - d / 2, mic.Y + mic.Height * MicHead.Y - d / 2, d, d);
         }
         using var f = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        using var tb = new SolidBrush(Gfx.Gold);
+        using var tb = new SolidBrush(Gfx.Accent);
         g.DrawString("MIC  " + m.Cab.MicPos.Display + " · " + m.Cab.Distance.Display, f, tb, new RectangleF(slot.X, box.Bottom + 40, slot.Width, 20), Gfx.Center);
     }
 
@@ -234,12 +234,12 @@ sealed class CabPage : WidgetSurface
         Gfx.Shadow(g, panel, 12, 140);
         using (var pp = Gfx.Round(panel, 12))
         {
-            using var pb = new LinearGradientBrush(panel, Color.FromArgb(235, 36, 32, 28), Color.FromArgb(235, 18, 16, 14), 90f);
+            using var pb = new LinearGradientBrush(panel, Color.FromArgb(235, 33, 33, 36), Color.FromArgb(235, 16, 16, 19), 90f);
             g.FillPath(pb, pp);
-            using var pen = new Pen(Color.FromArgb(90, Gfx.Gold), 1); g.DrawPath(pen, pp);
+            using var pen = new Pen(Color.FromArgb(90, Gfx.Accent), 1); g.DrawPath(pen, pp);
         }
         using var tf2 = new Font("Segoe UI", 14f, FontStyle.Bold);
-        using var gold = new SolidBrush(Gfx.Gold);
+        using var gold = new SolidBrush(Gfx.Accent);
         g.DrawString("CABINET", tf2, gold, panel.X + 18, panel.Y + 20, Gfx.Typo);
         using var sf = new Font("Segoe UI", 8f, FontStyle.Bold);
         using var dim = new SolidBrush(Gfx.Dim);

@@ -9,7 +9,7 @@ use crate::presets;
 use crate::spec::{self, EffectSpec};
 use std::sync::atomic::Ordering;
 
-const GOLD: Color = [214.0 / 255.0, 178.0 / 255.0, 96.0 / 255.0, 1.0];
+const ACCENT: Color = [228.0 / 255.0, 230.0 / 255.0, 236.0 / 255.0, 1.0];
 const TEXT: Color = [235.0 / 255.0, 225.0 / 255.0, 205.0 / 255.0, 1.0];
 const DIM: Color = [150.0 / 255.0, 140.0 / 255.0, 125.0 / 255.0, 1.0];
 const ROW1: f32 = 66.0;
@@ -19,7 +19,7 @@ const HEADER: f32 = ROW1 + ROW2;
 pub fn draw(app: &mut App, p: &mut Painter, dt: f64) {
     let (w, h) = app.size();
     // anything beyond the layout (spare room while the window is being resized) in the frame colour
-    p.fill(Rect::new(0.0, 0.0, 1e5, 1e5), rgb(16, 14, 12));
+    p.fill(Rect::new(0.0, 0.0, 1e5, 1e5), rgb(15, 15, 17));
     let body = Rect::new(0.0, HEADER, w, h - HEADER);
     if app.tuner_open {
         tuner(app, p, body, dt);
@@ -37,8 +37,8 @@ pub fn draw(app: &mut App, p: &mut Painter, dt: f64) {
         let msg = msg.clone();
         let tw = text::measure(Font::Semibold, 9.5, &msg) + 32.0;
         let r = Rect::new((w - tw) / 2.0, h - 54.0, tw, 32.0);
-        p.rrect(r, 8.0, rgba(24, 21, 19, 235));
-        p.rrect_stroke(r, 8.0, 1.0, with_alpha(GOLD, 140));
+        p.rrect(r, 8.0, rgba(21, 21, 24, 235));
+        p.rrect_stroke(r, 8.0, 1.0, with_alpha(ACCENT, 140));
         p.text_in(Font::Semibold, 9.5, &msg, r, 0.5, 0.5, TEXT);
     }
     preset_menu(app, p);
@@ -75,17 +75,17 @@ fn led(p: &mut Painter, r: Rect, on: bool, c: Color) {
 
 fn button(app: &mut App, p: &mut Painter, r: Rect, label: &str, hit: Hit, active: bool, pt: f32) {
     let (h, pr) = (hot(app, hit), pressed(app, hit));
-    let bg = if pr { rgb(70, 62, 50) } else if active { rgb(78, 64, 36) } else if h { rgb(56, 50, 44) } else { rgb(40, 36, 32) };
+    let bg = if pr { rgb(63, 63, 66) } else if active { rgb(64, 64, 67) } else if h { rgb(51, 51, 54) } else { rgb(37, 37, 40) };
     p.rrect(r, 5.0, bg);
-    p.rrect_stroke(r, 5.0, 1.0, if active { GOLD } else { rgb(80, 72, 60) });
-    p.text_in(Font::Bold, pt, label, r, 0.5, 0.5, if active { rgb(255, 230, 170) } else { TEXT });
+    p.rrect_stroke(r, 5.0, 1.0, if active { ACCENT } else { rgb(73, 73, 76) });
+    p.text_in(Font::Bold, pt, label, r, 0.5, 0.5, if active { rgb(255, 255, 255) } else { TEXT });
     app.hits.push((r, hit));
 }
 
 /// Latching switch with an LED (channel buttons, cab on…).
 fn switch(app: &mut App, p: &mut Painter, r: Rect, label: &str, hit: Hit, on: bool, led_c: Color) {
     let h = hot(app, hit);
-    let top = if on { rgb(66, 58, 48) } else if h { rgb(46, 41, 36) } else { rgb(34, 30, 26) };
+    let top = if on { rgb(59, 59, 62) } else if h { rgb(42, 42, 45) } else { rgb(31, 31, 34) };
     p.grad(r, 5.0, top, rgb(12, 10, 8));
     p.rrect_stroke(r, 5.0, 1.2, if on { with_alpha(led_c, 120) } else { rgba(0, 0, 0, 140) });
     led(p, Rect::new(r.x + 8.0, r.cy() - 3.5, 7.0, 7.0), on, led_c);
@@ -136,13 +136,13 @@ fn knob_tooltips(app: &App, p: &mut Painter) {
     let s = (app.params.knob_spec(k).fmt)(app.params.knob(k).value());
     let tw = text::measure(Font::Bold, 8.5, &s);
     let b = Rect::new(r.cx() - tw / 2.0 - 5.0, r.bottom() + 4.0, tw + 10.0, 17.0);
-    p.rrect(b, 5.0, rgba(18, 15, 12, if app.pressed.is_some() { 235 } else { 190 }));
-    p.text_in(Font::Bold, 8.5, &s, b, 0.5, 0.5, GOLD);
+    p.rrect(b, 5.0, rgba(15, 15, 18, if app.pressed.is_some() { 235 } else { 190 }));
+    p.text_in(Font::Bold, 8.5, &s, b, 0.5, 0.5, ACCENT);
 }
 
 fn meter(p: &mut Painter, r: Rect, peak: f32) {
     let db = 20.0 * (peak + 1e-6).log10();
-    p.fill(r, rgb(14, 12, 10));
+    p.fill(r, rgb(12, 12, 14));
     const SEGS: usize = 16;
     let sl = (r.h - 2.0) / SEGS as f32;
     for i in 0..SEGS {
@@ -170,10 +170,10 @@ fn box_shadow(p: &mut Painter, r: Rect, rad: f32, alpha: u8, dx: f32, dy: f32) {
 // ===================================================================== header
 
 fn header(app: &mut App, p: &mut Painter, w: f32) {
-    p.grad(Rect::new(0.0, 0.0, w, ROW1), 0.0, rgb(34, 30, 27), rgb(18, 16, 14));
-    p.fill(Rect::new(0.0, ROW1, w, ROW2), rgb(12, 11, 10));
-    p.fill(Rect::new(0.0, ROW1, w, 1.0), with_alpha(GOLD, 70));
-    p.fill(Rect::new(0.0, HEADER - 1.0, w, 1.0), with_alpha(GOLD, 70));
+    p.grad(Rect::new(0.0, 0.0, w, ROW1), 0.0, rgb(31, 31, 34), rgb(16, 16, 19));
+    p.fill(Rect::new(0.0, ROW1, w, ROW2), rgb(11, 11, 13));
+    p.fill(Rect::new(0.0, ROW1, w, 1.0), with_alpha(ACCENT, 70));
+    p.fill(Rect::new(0.0, HEADER - 1.0, w, 1.0), with_alpha(ACCENT, 70));
     p.logo(Rect::new(14.0, 6.0, 260.0, 52.0), 20.0, 0.0);
     // version, baseline-aligned just after the logo script
     let lm = text::line_metrics(Font::Script, 20.0);
@@ -186,7 +186,7 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
     if app.audio.is_some() {
         x -= 34.0;
         let gear = Rect::new(x, 16.0, 34.0, 34.0);
-        p.ellipse(gear, if hot(app, Hit::Gear) { rgb(50, 46, 42) } else { rgb(32, 29, 26) });
+        p.ellipse(gear, if hot(app, Hit::Gear) { rgb(47, 47, 50) } else { rgb(29, 29, 32) });
         p.text_in(Font::Regular, 14.0, "⚙", gear, 0.5, 0.5, TEXT);
         app.hits.push((gear, Hit::Gear));
         x -= 44.0;
@@ -196,7 +196,7 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
         if on {
             p.glow(pw.inflate(8.0, 8.0), with_alpha(c, 90), with_alpha(c, 0), 0.0);
         }
-        p.ellipse(pw, if hot(app, Hit::Power) { rgb(50, 46, 42) } else { rgb(32, 29, 26) });
+        p.ellipse(pw, if hot(app, Hit::Power) { rgb(47, 47, 50) } else { rgb(29, 29, 32) });
         let ir = pw.inflate(-9.0, -9.0);
         p.arc(ir.cx(), ir.cy(), ir.w / 2.0, -60.0, 300.0, 2.4, c);
         p.line(pw.cx(), ir.y - 2.0, pw.cx(), pw.cy(), 2.4, c);
@@ -228,11 +228,11 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
     let cx = (270.0 + x) / 2.0 - 40.0;
     button(app, p, Rect::new(cx - 190.0, 17.0, 32.0, 32.0), "◀", Hit::PresetPrev, false, 8.5);
     let pr = Rect::new(cx - 152.0, 17.0, 304.0, 32.0);
-    p.rrect(pr, 6.0, if hot(app, Hit::PresetMenu) { rgb(44, 40, 36) } else { rgb(30, 27, 24) });
-    p.rrect_stroke(pr, 6.0, 1.0, with_alpha(GOLD, 110));
+    p.rrect(pr, 6.0, if hot(app, Hit::PresetMenu) { rgb(41, 41, 44) } else { rgb(27, 27, 30) });
+    p.rrect_stroke(pr, 6.0, 1.0, with_alpha(ACCENT, 110));
     let name = format!("{}{}", app.preset_name, if app.dirty { " *" } else { "" });
     p.text_fit(Font::Bold, 10.5, &name, Rect::new(pr.x + 10.0, pr.y, pr.w - 34.0, pr.h), 0.5, TEXT);
-    p.text_in(Font::Bold, 10.5, "▾", Rect::new(pr.right() - 26.0, pr.y, 20.0, pr.h), 0.5, 0.5, GOLD);
+    p.text_in(Font::Bold, 10.5, "▾", Rect::new(pr.right() - 26.0, pr.y, 20.0, pr.h), 0.5, 0.5, ACCENT);
     app.hits.push((pr, Hit::PresetMenu));
     button(app, p, Rect::new(cx + 158.0, 17.0, 32.0, 32.0), "▶", Hit::PresetNext, false, 8.5);
     button(app, p, Rect::new(cx + 198.0, 17.0, 62.0, 32.0), "SAVE", Hit::Save, false, 8.5);
@@ -249,9 +249,9 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
         let b = Rect::new(tx + i as f32 * (tw + gap), ROW1 + 6.0, tw, ROW2 - 12.0);
         let active = app.page == i && !app.tuner_open;
         let h = hot(app, Hit::Tab(i));
-        p.rrect(b, 6.0, if active { rgb(58, 48, 30) } else if h { rgb(38, 34, 30) } else { rgb(26, 23, 20) });
-        p.rrect_stroke(b, 6.0, if active { 1.5 } else { 1.0 }, if active { GOLD } else { rgb(60, 54, 46) });
-        p.text_in(Font::Bold, 8.5, PAGES[i], Rect::new(b.x, b.y + 2.0, b.w, b.h / 2.0), 0.5, 0.5, if active { rgb(255, 230, 170) } else { TEXT });
+        p.rrect(b, 6.0, if active { rgb(48, 48, 51) } else if h { rgb(35, 35, 38) } else { rgb(23, 23, 26) });
+        p.rrect_stroke(b, 6.0, if active { 1.5 } else { 1.0 }, if active { ACCENT } else { rgb(55, 55, 58) });
+        p.text_in(Font::Bold, 8.5, PAGES[i], Rect::new(b.x, b.y + 2.0, b.w, b.h / 2.0), 0.5, 0.5, if active { rgb(255, 255, 255) } else { TEXT });
         let sub = Rect::new(b.x, b.y + b.h / 2.0, b.w, b.h / 2.0 - 2.0);
         if i == 3 && app.params.eq_on.value() {
             // the slider positions in miniature
@@ -262,7 +262,7 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
             for (k, f) in app.params.eq.iter().take(spec::EQ_BANDS).enumerate() {
                 let d = (f.value() - 0.5) * 2.0 * half;
                 let bar = Rect::new(start + k as f32 * bw + 1.5, mid - d.max(0.0), bw - 3.0, d.abs().max(1.5));
-                p.rrect(bar, 1.0, rgba(255, 120, 40, 220));
+                p.rrect(bar, 1.0, rgba(236, 238, 244, 220));
             }
         } else if i == 3 {
             p.text_in(Font::Bold, 7.0, "BYPASSED", sub, 0.5, 0.5, DIM);
@@ -272,7 +272,7 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
             let start = b.x + (b.w - dw * fx.len() as f32) / 2.0;
             for (k, f) in fx.iter().enumerate() {
                 let d = Rect::new(start + k as f32 * dw + 3.0, sub.y + 3.0, dw - 6.0, sub.h - 6.0);
-                p.rrect(d, 3.0, if f.on.value() { rgba(255, 120, 40, 200) } else { rgba(255, 255, 255, 50) });
+                p.rrect(d, 3.0, if f.on.value() { rgba(236, 238, 244, 200) } else { rgba(255, 255, 255, 50) });
             }
         } else {
             let s = if i == 1 {
@@ -288,7 +288,7 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
             p.text_in(Font::Bold, 7.0, &s, sub, 0.5, 0.5, DIM);
         }
         if i + 1 < PAGES.len() {
-            p.text_in(Font::Bold, 12.0, "→", Rect::new(b.right(), b.y, gap, b.h), 0.5, 0.5, with_alpha(GOLD, 120));
+            p.text_in(Font::Bold, 12.0, "→", Rect::new(b.right(), b.y, gap, b.h), 0.5, 0.5, with_alpha(ACCENT, 120));
         }
         app.hits.push((b, Hit::Tab(i)));
     }
@@ -609,7 +609,7 @@ fn tolex_box(app: &App, p: &mut Painter, r: Rect, scale: f32) {
     box_shadow(p, r, 18.0, 160, 6.0, 10.0);
     p.tile(app.tex("tolex.jpg"), r, scale, 18.0);
     p.grad(r, 18.0, rgba(255, 255, 255, 50), rgba(0, 0, 0, 90));
-    p.rrect_stroke(r.inflate(-8.0, -8.0), 12.0, 1.5, with_alpha(GOLD, 160));
+    p.rrect_stroke(r.inflate(-8.0, -8.0), 12.0, 1.5, with_alpha(ACCENT, 160));
     for (cx, cy) in [(r.x, r.y), (r.right() - 30.0, r.y), (r.x, r.bottom() - 30.0), (r.right() - 30.0, r.bottom() - 30.0)] {
         let c = Rect::new(cx, cy, 30.0, 30.0);
         p.grad(c, 9.0, rgb(230, 230, 225), rgb(90, 90, 95));
@@ -967,19 +967,19 @@ fn cab_page(app: &mut App, p: &mut Painter, r: Rect) {
     p.image(mic_t, mic);
     if hot(app, Hit::Mic) || pressed(app, Hit::Mic) {
         let head = Rect::centered(mic.x + mic.w * MIC_HEAD.0, mic.y + mic.h * MIC_HEAD.1, mic.h * 1.05, mic.h * 1.05);
-        p.ellipse_stroke(head, 2.0, with_alpha(GOLD, 180));
+        p.ellipse_stroke(head, 2.0, with_alpha(ACCENT, 180));
     }
     let lbl = format!("MIC  {} · {}", (spec::CAB_KNOBS[0].fmt)(pos), (spec::CAB_KNOBS[1].fmt)(dist));
-    p.text_in(Font::Bold, 8.5, &lbl, Rect::new(l.slot.x, bx.bottom() + 40.0, l.slot.w, 20.0), 0.5, 0.5, GOLD);
+    p.text_in(Font::Bold, 8.5, &lbl, Rect::new(l.slot.x, bx.bottom() + 40.0, l.slot.w, 20.0), 0.5, 0.5, ACCENT);
     // grab the mic itself, or anywhere along the speaker's row
     app.hits.push((mic, Hit::Mic));
     app.hits.push((Rect::new(l.spk.0 - l.spk_r, l.spk.1 - mic.h / 2.0 - 10.0, l.spk_r * 1.3, mic.h + 20.0), Hit::Mic));
 
     // control panel
     box_shadow(p, panel, 12.0, 140, 6.0, 10.0);
-    p.grad(panel, 12.0, rgba(36, 32, 28, 235), rgba(18, 16, 14, 235));
-    p.rrect_stroke(panel, 12.0, 1.0, with_alpha(GOLD, 90));
-    p.text(Font::Bold, 14.0, "CABINET", panel.x + 18.0, panel.y + 20.0, GOLD);
+    p.grad(panel, 12.0, rgba(33, 33, 36, 235), rgba(16, 16, 19, 235));
+    p.rrect_stroke(panel, 12.0, 1.0, with_alpha(ACCENT, 90));
+    p.text(Font::Bold, 14.0, "CABINET", panel.x + 18.0, panel.y + 20.0, ACCENT);
     if app.params.channel.value() == spec::ACOUSTIC {
         p.text(Font::Bold, 8.0, "SPEAKER MODEL — bypassed on the acoustic channel", panel.x + 22.0, panel.y + 64.0, DIM);
     } else {
@@ -1013,7 +1013,7 @@ fn cab_page(app: &mut App, p: &mut Painter, r: Rect) {
             cy = panel.bottom() - 30.0 - ks / 2.0;
         }
         let kr = Rect::centered(cx, cy, ks, ks);
-        knob(app, p, kr, Knob::Cab(i), img, KnobLook { ticks: Some(rgba(214, 178, 96, 150)), baked_shadow: false });
+        knob(app, p, kr, Knob::Cab(i), img, KnobLook { ticks: Some(with_alpha(ACCENT, 150)), baked_shadow: false });
         p.text_in(Font::ArialBold, 7.5, spec::CAB_KNOBS[i].name, Rect::new(kr.x - 30.0, kr.y - 26.0, kr.w + 60.0, 14.0), 0.5, 0.5, TEXT);
     }
 }
@@ -1033,8 +1033,8 @@ pub const FADER_THUMB_H: f32 = 20.0;
 const EQ_VIEW_DB: f32 = 18.0;
 
 fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
-    const AMBER: Color = [255.0 / 255.0, 186.0 / 255.0, 84.0 / 255.0, 1.0];
-    const CORE: Color = [255.0 / 255.0, 224.0 / 255.0, 170.0 / 255.0, 1.0];
+    const GLOW: Color = [225.0 / 255.0, 230.0 / 255.0, 242.0 / 255.0, 1.0];
+    const CORE: Color = [255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 1.0];
     p.fill(r, SLATE);
     p.text(Font::Semibold, 15.0, "GRAPHIC EQ", 30.0, r.y + 20.0, rgb(240, 242, 245));
     p.text(Font::Regular, 9.0, "Nine octave bands after the cab, before the post effects — drag a slider (double-click = 0 dB, wheel = fine steps)", 33.0, r.y + 52.0, rgba(205, 210, 220, 150));
@@ -1068,7 +1068,7 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
     p.image(panel_t, unit);
 
     // EQ ON and FLAT, top right above the unit
-    switch(app, p, Rect::new(unit.right() - 84.0, r.y + 22.0, 84.0, 28.0), "EQ ON", Hit::EqOn, on, rgb(255, 150, 50));
+    switch(app, p, Rect::new(unit.right() - 84.0, r.y + 22.0, 84.0, 28.0), "EQ ON", Hit::EqOn, on, rgb(236, 240, 248));
     button(app, p, Rect::new(unit.right() - 160.0, r.y + 22.0, 64.0, 28.0), "FLAT", Hit::EqFlat, false, 8.0);
 
     // response display on the glass: log frequency 20 Hz–20 kHz, ±18 dB
@@ -1098,8 +1098,8 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
             (fx(f), dy(resp(f.min(0.499 * fs)).clamp(-40.0, 40.0)))
         })
         .collect();
-    // a soft amber glow round a pale core, like the concept's display
-    let passes: &[(f32, Color)] = if on { &[(14.0, with_alpha(AMBER, 18)), (6.0, with_alpha(AMBER, 60)), (2.2, CORE)] } else { &[(2.0, with_alpha(DIM, 150))] };
+    // a soft white glow round a bright core, like the concept's display
+    let passes: &[(f32, Color)] = if on { &[(14.0, with_alpha(GLOW, 18)), (6.0, with_alpha(GLOW, 60)), (2.2, CORE)] } else { &[(2.0, with_alpha(DIM, 150))] };
     for &(w, c) in passes {
         for s in pts.windows(2) {
             p.line(s[0].0, s[0].1, s[1].0, s[1].1, w, c);
@@ -1144,7 +1144,7 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
         p.rrect_stroke(slot, 3.0, 1.0, rgba(255, 255, 255, 22));
         let (ym, yt) = (ty(0.5), ty(v));
         if on && (yt - ym).abs() > 0.5 {
-            p.rrect(Rect::new(cx - 2.0, ym.min(yt), 4.0, (yt - ym).abs()), 2.0, with_alpha(AMBER, 200));
+            p.rrect(Rect::new(cx - 2.0, ym.min(yt), 4.0, (yt - ym).abs()), 2.0, with_alpha(GLOW, 200));
         }
         // the thumb
         let tw = (sw * 0.6).clamp(26.0, 46.0);
@@ -1152,13 +1152,13 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
         let thumb = Rect::centered(cx, yt, tw, th);
         p.rrect(Rect::new(thumb.x + 2.0, thumb.y + 4.0, tw, th), 4.0, rgba(0, 0, 0, 130));
         p.grad(thumb, 4.0, rgb(214, 208, 196), rgb(108, 102, 94));
-        p.rrect_stroke(thumb, 4.0, 1.0, if fader_hot(app, k) { GOLD } else { rgba(0, 0, 0, 160) });
-        p.fill(Rect::new(thumb.x + 4.0, thumb.cy() - 1.0, tw - 8.0, 2.0), if on { rgb(40, 30, 20) } else { rgb(70, 66, 60) });
+        p.rrect_stroke(thumb, 4.0, 1.0, if fader_hot(app, k) { ACCENT } else { rgba(0, 0, 0, 160) });
+        p.fill(Rect::new(thumb.x + 4.0, thumb.cy() - 1.0, tw - 8.0, 2.0), if on { rgb(32, 32, 35) } else { rgb(66, 66, 69) });
         // value above the slot, name below
         let val = (spec::EQ_KNOBS[i].fmt)(v);
-        p.text_in(Font::Bold, 7.5, &val, Rect::new(cx - sw / 2.0, vy, sw, 14.0), 0.5, 0.5, if fader_hot(app, k) { GOLD } else { TEXT });
+        p.text_in(Font::Bold, 7.5, &val, Rect::new(cx - sw / 2.0, vy, sw, 14.0), 0.5, 0.5, if fader_hot(app, k) { ACCENT } else { TEXT });
         let name = if level { "LEVEL".to_string() } else { format!("{} Hz", spec::EQ_KNOBS[i].name.replace('K', "k")) };
-        p.text_in(Font::ArialBold, 7.0, &name, Rect::new(cx - sw / 2.0, ny, sw, 12.0), 0.5, 0.5, if level { GOLD } else { DIM });
+        p.text_in(Font::ArialBold, 7.0, &name, Rect::new(cx - sw / 2.0, ny, sw, 12.0), 0.5, 0.5, if level { ACCENT } else { DIM });
         app.hits.push((Rect::new(cx - sw / 2.0, y0 - th / 2.0 - 2.0, sw, y1 - y0 + th + 4.0), Hit::Fader(k)));
         app.fader_tracks.push((k, Rect::new(cx - 1.0, y0, 2.0, y1 - y0)));
     }
@@ -1173,7 +1173,7 @@ fn tuner(app: &mut App, p: &mut Painter, r: Rect, dt: f64) {
     p.cover(app.tex("backdrop.jpg"), r);
     p.fill(r, rgba(6, 5, 4, 205));
     vignette(p, r, 200);
-    p.text(Font::Bold, 15.0, "TUNER", 28.0, r.y + 18.0, with_alpha(GOLD, 220));
+    p.text(Font::Bold, 15.0, "TUNER", 28.0, r.y + 18.0, with_alpha(ACCENT, 220));
     p.text(Font::Regular, 9.0, "Play a single string and let it ring.  T or Esc closes the tuner.", 31.0, r.y + 48.0, rgba(230, 220, 200, 160));
 
     let w = (r.w - 80.0).min(900.0);
@@ -1196,8 +1196,8 @@ fn tuner(app: &mut App, p: &mut Painter, r: Rect, dt: f64) {
     p.fill(Rect::new(meter.x + 0.47 * meter.w, meter.y, meter.w * 0.06, meter.h - 22.0), with_alpha(in_tune, 50));
     p.text(Font::Bold, 22.0, "♭", meter.x - 44.0, meter.y + 4.0, dim);
     p.text(Font::Bold, 22.0, "♯", meter.right() + 12.0, meter.y + 4.0, dim);
-    p.rrect(strobe, 6.0, rgb(18, 16, 14));
-    p.rrect_stroke(strobe, 6.0, 1.0, with_alpha(GOLD, 80));
+    p.rrect(strobe, 6.0, rgb(16, 16, 19));
+    p.rrect_stroke(strobe, 6.0, 1.0, with_alpha(ACCENT, 80));
 
     let sig = app.tuner.has_signal;
     let (note, oct, cents) = if sig { app.tuner.describe(app.tuner.frequency) } else { ("–", 0, 0.0) };
@@ -1287,33 +1287,33 @@ fn preset_menu(app: &mut App, p: &mut Painter) {
     let extra = if is_user { row + 6.0 } else { 0.0 };
     let r = Rect::new(cx - 152.0, 52.0, 304.0, (shown.len() + headers) as f32 * row + 8.0 + extra);
     p.rrect(Rect::new(r.x + 4.0, r.y + 6.0, r.w, r.h), 8.0, rgba(0, 0, 0, 120));
-    p.rrect(r, 8.0, rgb(30, 27, 24));
-    p.rrect_stroke(r, 8.0, 1.0, rgb(80, 70, 56));
+    p.rrect(r, 8.0, rgb(27, 27, 30));
+    p.rrect_stroke(r, 8.0, 1.0, rgb(71, 71, 74));
     app.hits.push((r, Hit::Block));
     let mut y = r.y + 4.0;
     if menu.scroll == 0 {
-        p.text_in(Font::Bold, 8.0, "FACTORY", Rect::new(r.x + 12.0, y, r.w, row), 0.0, 0.5, GOLD);
+        p.text_in(Font::Bold, 8.0, "FACTORY", Rect::new(r.x + 12.0, y, r.w, row), 0.0, 0.5, ACCENT);
         y += row;
     }
     for (i, name) in shown {
         if i == user_from {
-            p.fill(Rect::new(r.x + 8.0, y + 2.0, r.w - 16.0, 1.0), rgb(70, 62, 52));
-            p.text_in(Font::Bold, 8.0, "USER", Rect::new(r.x + 12.0, y, r.w, row), 0.0, 0.5, GOLD);
+            p.fill(Rect::new(r.x + 8.0, y + 2.0, r.w - 16.0, 1.0), rgb(63, 63, 66));
+            p.text_in(Font::Bold, 8.0, "USER", Rect::new(r.x + 12.0, y, r.w, row), 0.0, 0.5, ACCENT);
             y += row;
         }
         let ir = Rect::new(r.x + 4.0, y, r.w - 8.0, row);
         if hot(app, Hit::MenuItem(i)) {
-            p.rrect(ir, 4.0, rgb(70, 58, 36));
+            p.rrect(ir, 4.0, rgb(58, 58, 61));
         }
         if name == app.preset_name {
-            p.text_in(Font::Bold, 9.5, "✓", Rect::new(ir.x + 6.0, y, 20.0, row), 0.0, 0.5, GOLD);
+            p.text_in(Font::Bold, 9.5, "✓", Rect::new(ir.x + 6.0, y, 20.0, row), 0.0, 0.5, ACCENT);
         }
         p.text_in(Font::Regular, 9.5, &name, Rect::new(ir.x + 28.0, y, ir.w - 30.0, row), 0.0, 0.5, TEXT);
         app.hits.push((ir, Hit::MenuItem(i)));
         y += row;
     }
     if is_user {
-        p.fill(Rect::new(r.x + 8.0, y + 3.0, r.w - 16.0, 1.0), rgb(70, 62, 52));
+        p.fill(Rect::new(r.x + 8.0, y + 3.0, r.w - 16.0, 1.0), rgb(63, 63, 66));
         let dr = Rect::new(r.x + 4.0, y + 6.0, r.w - 8.0, row);
         if hot(app, Hit::MenuDelete) {
             p.rrect(dr, 4.0, rgb(70, 40, 36));
@@ -1331,11 +1331,11 @@ fn dialog(app: &mut App, p: &mut Painter, w: f32, h: f32) {
     app.hits.push((Rect::new(0.0, 0.0, w, h), Hit::Block));
     let r = Rect::centered(w / 2.0, h / 2.0, 420.0, 170.0);
     p.rrect(r, 10.0, rgb(24, 21, 19));
-    p.rrect_stroke(r, 10.0, 1.0, with_alpha(GOLD, 140));
-    p.text(Font::Bold, 12.0, "Save Preset", r.x + 22.0, r.y + 18.0, GOLD);
+    p.rrect_stroke(r, 10.0, 1.0, with_alpha(ACCENT, 140));
+    p.text(Font::Bold, 12.0, "Save Preset", r.x + 22.0, r.y + 18.0, ACCENT);
     let field = Rect::new(r.x + 22.0, r.y + 56.0, r.w - 44.0, 34.0);
-    p.rrect(field, 5.0, rgb(40, 36, 32));
-    p.rrect_stroke(field, 5.0, 1.0, rgb(90, 78, 60));
+    p.rrect(field, 5.0, rgb(37, 37, 40));
+    p.rrect_stroke(field, 5.0, 1.0, rgb(79, 79, 82));
     let caret = if std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() % 1000 < 500).unwrap_or(true) { "|" } else { "" };
     p.text_in(Font::Regular, 10.5, &format!("{text}{caret}"), Rect::new(field.x + 10.0, field.y, field.w - 20.0, field.h), 0.0, 0.5, TEXT);
     button(app, p, Rect::new(r.right() - 22.0 - 110.0, r.bottom() - 52.0, 110.0, 32.0), "SAVE", Hit::DialogOk, true, 9.0);
@@ -1351,8 +1351,8 @@ fn selector(app: &mut App, p: &mut Painter, label: &str, value: &str, y: f32, r:
     let w = r.right() - 24.0 - x0;
     button(app, p, Rect::new(x0, y, 32.0, 32.0), "◀", Hit::Cycle(f, -1), false, 8.5);
     let vr = Rect::new(x0 + 38.0, y, w - 76.0, 32.0);
-    p.rrect(vr, 5.0, rgb(30, 27, 24));
-    p.rrect_stroke(vr, 5.0, 1.0, rgb(80, 72, 60));
+    p.rrect(vr, 5.0, rgb(27, 27, 30));
+    p.rrect_stroke(vr, 5.0, 1.0, rgb(73, 73, 76));
     p.text_fit(Font::Semibold, 9.5, value, vr.inflate(-10.0, 0.0), 0.5, TEXT);
     button(app, p, Rect::new(x0 + w - 32.0, y, 32.0, 32.0), "▶", Hit::Cycle(f, 1), false, 8.5);
 }
@@ -1367,9 +1367,9 @@ fn audio_settings(app: &mut App, p: &mut Painter, w: f32, h: f32) {
     app.hits.push((Rect::new(0.0, 0.0, w, h), Hit::Block));
     let r = Rect::centered(w / 2.0, h / 2.0, 600.0, 430.0);
     p.rrect(Rect::new(r.x + 6.0, r.y + 10.0, r.w, r.h), 12.0, rgba(0, 0, 0, 120));
-    p.grad(r, 12.0, rgb(36, 32, 28), rgb(20, 18, 16));
-    p.rrect_stroke(r, 12.0, 1.0, with_alpha(GOLD, 140));
-    p.text(Font::Bold, 14.0, "AUDIO SETTINGS", r.x + 24.0, r.y + 18.0, GOLD);
+    p.grad(r, 12.0, rgb(33, 33, 36), rgb(18, 18, 21));
+    p.rrect_stroke(r, 12.0, 1.0, with_alpha(ACCENT, 140));
+    p.text(Font::Bold, 14.0, "AUDIO SETTINGS", r.x + 24.0, r.y + 18.0, ACCENT);
 
     let mut y = r.y + 64.0;
     p.text_in(Font::Bold, 8.0, "DRIVER", Rect::new(r.x + 24.0, y, 150.0, 32.0), 0.0, 0.5, DIM);

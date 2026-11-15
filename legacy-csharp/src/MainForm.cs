@@ -281,7 +281,7 @@ public sealed class MainForm : Form
     void ShowPresetMenu(RectangleF at)
     {
         var menu = new ContextMenuStrip { Renderer = new ToolStripProfessionalRenderer(new Theme.MenuColors()), ShowImageMargin = false, ShowCheckMargin = true, Font = new Font("Segoe UI", 9.5f) };
-        ToolStripItem Head(string t) => new ToolStripLabel(t) { ForeColor = Theme.Gold, Font = new Font("Segoe UI", 8f, FontStyle.Bold) };
+        ToolStripItem Head(string t) => new ToolStripLabel(t) { ForeColor = Theme.Accent, Font = new Font("Segoe UI", 8f, FontStyle.Bold) };
         ToolStripMenuItem Item(string n) => new(n, null, (_, _) => ApplyPreset(n)) { ForeColor = Theme.Text, Checked = n == presetName };
         menu.Items.Add(Head("FACTORY"));
         foreach (var p in FactoryPresets.All) menu.Items.Add(Item(p.Name));
