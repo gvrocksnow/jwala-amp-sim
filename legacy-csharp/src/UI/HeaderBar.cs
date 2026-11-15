@@ -131,7 +131,7 @@ sealed class HeaderBar : WidgetSurface
         }
         else
         {
-            string s = idx == 1 ? m.Amp.Channel.ToString().ToUpper() + (m.Amp.Bright ? " · BRIGHT" : "")
+            string s = idx == 1 ? (m.Amp.Channel == Channel.LeadII ? "LEAD II" : m.Amp.Channel.ToString().ToUpper()) + (m.Amp.Bright ? " · BRIGHT" : "")
                                 : !m.Cab.Enabled ? "BYPASSED" : m.Amp.Channel == Channel.Acoustic ? "MIC ONLY"
                                 : m.Cab.Model == 3 ? "USER IR" : Convolver.Models[m.Cab.Model];
             using var sb = new SolidBrush(Gfx.Dim);

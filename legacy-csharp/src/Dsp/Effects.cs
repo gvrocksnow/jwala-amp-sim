@@ -86,6 +86,8 @@ public sealed class DelayLine
     }
     public int Capacity => buf.Length - 4;
     public void Write(double x) { w = (w + 1) & mask; buf[w] = (float)x; }
+    /// <summary>Whole-sample read without interpolation (for fixed-length allpasses).</summary>
+    public double Tap(int delay) => buf[(w - delay) & mask];
     public double Read(double delay)
     {
         if (delay < 1) delay = 1;

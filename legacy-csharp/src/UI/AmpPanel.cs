@@ -23,9 +23,11 @@ sealed class AmpPanel : WidgetSurface
     // acoustic switches).
     static readonly float[] KnobX = { 0.2751f, 0.3501f, 0.4251f, 0.5001f, 0.5751f, 0.6501f, 0.7251f };
     const float RowY = 0.4131f, KnobD = 0.056f, LedD = 0.019f;
-    /// <summary>CLEAN, CRUNCH, LEAD, ACOUSTIC on the left; the acoustic channel's DECAY, ATTACK and DYNAMIC
+    /// <summary>CLEAN, CRUNCH, LEAD, LEAD II, ACOUSTIC on the left; the acoustic channel's DECAY, ATTACK and DYNAMIC
     /// switches, BRIGHT and POWER on the right.</summary>
-    static readonly float[] ChX = { 0.092f, 0.137f, 0.182f, 0.227f };
+    static readonly float[] ChX = { 0.060f, 0.10175f, 0.1435f, 0.18525f, 0.227f };
+    /// <summary>The channel behind each of those LEDs: LEAD II sits beside LEAD, though it is numbered last.</summary>
+    static readonly int[] ChOrder = { 0, 1, 2, 4, 3 };
     static readonly float[] AcousticX = { 0.785f, 0.821f, 0.857f };
     const float BrightX = 0.899f, PowerX = 0.937f;
     /// <summary>Cabinet width relative to the head in the stack render.</summary>
@@ -35,7 +37,7 @@ sealed class AmpPanel : WidgetSurface
     static readonly string[] KnobNames = { "GAIN", "BASS", "MID", "TREBLE", "PRESENCE", "DEPTH", "MASTER" };
     /// <summary>The same knobs on the ACOUSTIC channel (see Dsp/Acoustic.cs).</summary>
     static readonly string[] AcousticKnobNames = { "BODY", "BASS", "MID", "TREBLE", "AIR", "RESO", "LEVEL" };
-    static readonly string[] Channels = { "CLEAN", "CRUNCH", "LEAD", "ACOUSTIC" };
+    static readonly string[] Channels = { "CLEAN", "CRUNCH", "LEAD", "ACOUSTIC", "LEAD II" };
     /// <summary>The acoustic channel's switches (see Dsp/Acoustic.cs), as printed under their LEDs.</summary>
     static readonly string[] AcousticSwitches = { "DECAY", "ATTACK", "DYNAMIC" };
 
@@ -68,10 +70,11 @@ sealed class AmpPanel : WidgetSurface
         {
             ("amp_led_green.png", Color.FromArgb(60, 230, 110)), ("amp_led_red.png", Color.FromArgb(255, 170, 40)),
             ("amp_led_red.png", Color.FromArgb(255, 50, 40)), ("amp_led_green.png", Color.FromArgb(90, 180, 255)),
+            ("amp_led_red.png", Color.FromArgb(255, 60, 150)),
         };
         for (int i = 0; i < ChX.Length; i++)
         {
-            int ch = i;
+            int ch = ChOrder[i];
             var c = At(ChX[i], RowY);
             W.Add(new CustomWidget
             {
@@ -88,6 +91,10 @@ sealed class AmpPanel : WidgetSurface
                     // acoustic is blue: cool the green lamp's core
                     if (on && ch == 3)
                         using (var core = new SolidBrush(Color.FromArgb(210, 130, 200, 255)))
+                            g.FillEllipse(core, Centered(c, ld * 0.55f, ld * 0.55f));
+                    // lead II is magenta: push the red lamp's core towards violet
+                    if (on && ch == 4)
+                        using (var core = new SolidBrush(Color.FromArgb(210, 255, 130, 220)))
                             g.FillEllipse(core, Centered(c, ld * 0.55f, ld * 0.55f));
                 },
                 // the knob labels change with the acoustic channel, so repaint the faceplate
@@ -168,7 +175,7 @@ sealed class AmpPanel : WidgetSurface
             g.DrawString("AMPLIFIER", tf, tb, 30, 20, Gfx.Typo);
         using (var sf = new Font("Segoe UI", 9f))
         using (var sb = new SolidBrush(Color.FromArgb(150, 205, 210, 220)))
-            g.DrawString("Three tube channels plus an acoustic-guitar simulator — click a channel LED to switch, drag knobs (Shift = fine, double-click = reset)", sf, sb, 33, 52, Gfx.Typo);
+            g.DrawString("Four tube channels plus an acoustic-guitar simulator — click a channel LED to switch, drag knobs (Shift = fine, double-click = reset)", sf, sb, 33, 52, Gfx.Typo);
 
         // soft shadows like the pedal pages: the stack on the slate, then the knobs and LEDs on the faceplate
         var headImg = Assets.Image("amp_head.png");
@@ -210,9 +217,9 @@ sealed class AmpPanel : WidgetSurface
         for (int i = 0; i < ChX.Length; i++)
         {
             var c = At(ChX[i], RowY);
-            g.DrawString(Channels[i], small, ink, new RectangleF(c.X - 40, c.Y + ld * 0.8f, 80, lf * 2), Gfx.CenterNoWrap);
+            g.DrawString(Channels[ChOrder[i]], small, ink, new RectangleF(c.X - 40, c.Y + ld * 0.8f, 80, lf * 2), Gfx.CenterNoWrap);
         }
-        float c0 = At(ChX[0], RowY).X, c3 = At(ChX[3], RowY).X;
+        float c0 = At(ChX[0], RowY).X, c3 = At(ChX[4], RowY).X;
         g.DrawString("CHANNEL", font, ink, new RectangleF(c0, labelY, c3 - c0, lf * 2), Gfx.CenterNoWrap);
         // the acoustic channel's switches: dimmed print while another channel is selected
         using (var acInk = new SolidBrush(m.Amp.Channel == Channel.Acoustic ? Print : Color.FromArgb(110, Print)))

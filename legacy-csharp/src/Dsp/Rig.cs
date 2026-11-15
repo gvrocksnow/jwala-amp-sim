@@ -77,12 +77,33 @@ public sealed class Rig
     public readonly RigModel M;
     public float InputPeak, OutputPeakL, OutputPeakR, GateOpen;
 
+    /// <summary>Early reflections off the room (delay in seconds, gain), slightly different per side.</summary>
+    static readonly (double T, double G)[] RoomL = { (0.0029, 0.55), (0.0047, -0.42), (0.0073, 0.33), (0.0109, -0.24), (0.0157, 0.17) };
+    static readonly (double T, double G)[] RoomR = { (0.0034, 0.52), (0.0055, -0.40), (0.0082, 0.31), (0.0121, -0.22), (0.0171, 0.15) };
+
+    /// <summary>Schroeder allpass: smears the room's reflections so they don't ring.</summary>
+    sealed class Allpass
+    {
+        readonly double[] buf; int i; readonly double g;
+        public Allpass(double len, double g) { buf = new double[Math.Max((int)len, 1)]; this.g = g; }
+        public double Process(double x)
+        {
+            double d = buf[i], w = x + g * d;
+            buf[i] = w;
+            i = (i + 1) % buf.Length;
+            return d - g * w;
+        }
+    }
+
     readonly AmpEngine amp;
     readonly Convolver cab = new();
     readonly GraphicEq eq;
     int cabModel = -1; float[] cabIr;
-    Biquad micShelf, micLp, proximity, lowCut, highCut;
+    // both sides share coefficients; each keeps its own state
+    readonly Biquad[] micShelf = new Biquad[2], micLp = new Biquad[2], proximity = new Biquad[2], lowCut = new Biquad[2], highCut = new Biquad[2];
     readonly DelayLine room;
+    readonly OnePole[] roomLp = new OnePole[2];
+    readonly Allpass[][] roomAp;
     float lpPos = -1, lpDist = -1, lpLow = -1, lpHigh = -1;
     OnePole inHp, outDcL, outDcR;
     double gateEnv, gateGain, gateDet, gateAtk, gateRel, sIn, sOut, smooth;
@@ -96,7 +117,13 @@ public sealed class Rig
         amp = new AmpEngine(fs, m.Amp, os);
         foreach (var e in m.Post) e.Prepare(fs);
         eq = new GraphicEq(fs, m.Eq);
-        room =new DelayLine((int)(fs * 0.02));
+        room = new DelayLine((int)(fs * 0.02));
+        for (int c = 0; c < 2; c++) roomLp[c].SetLowPass(fs, 5500); // the walls soak up the top
+        roomAp = new[]
+        {
+            new[] { new Allpass(fs * 0.0013, 0.5), new Allpass(fs * 0.0023, 0.5) },
+            new[] { new Allpass(fs * 0.0017, 0.5), new Allpass(fs * 0.0029, 0.5) },
+        };
         inHp.SetLowPass(fs, 25); outDcL.SetLowPass(fs, 10); outDcR.SetLowPass(fs, 10);
         gateDet = 1 - Math.Exp(-1 / (fs * 0.04));
         gateAtk = 1 - Math.Exp(-1 / (fs * 0.0008));
@@ -107,55 +134,46 @@ public sealed class Rig
 
     static double Db(double db) => Math.Pow(10, db / 20);
 
-    /// <summary>Rebuilds the cab IR. Call from the UI thread when the model or user IR changes.</summary>
+    /// <summary>Rebuilds the cab IRs. Call from the UI thread when the model or user IR changes.</summary>
     public void UpdateCabIr()
     {
         var c = M.Cab;
-        float[] ir;
-        if (c.Model == 3 && c.IrData != null)
-        {
-            ir = Resample(c.IrData, c.IrRate, (int)SampleRate);
-            ir = (float[])ir.Clone();
-            Convolver.Normalize(ir, SampleRate);
-        }
-        else ir = Convolver.SyntheticCab(SampleRate, Math.Clamp(c.Model, 0, 2));
-        cab.SetImpulse(ir);
-        cabModel = c.Model; cabIr = c.IrData;
+        int model = c.Model; float[] data = c.IrData; int rate = c.IrRate;
+        cab.Swap(Cab.Build(SampleRate, model, data, rate));
+        cabModel = model; cabIr = data;
     }
 
     public bool CabStale => cabModel != M.Cab.Model || cabIr != M.Cab.IrData;
 
-    static float[] Resample(float[] x, int from, int to)
-    {
-        if (from == to) return x;
-        int n = (int)((long)x.Length * to / from);
-        var y = new float[n];
-        double step = (double)from / to;
-        for (int i = 0; i < n; i++)
-        {
-            double t = i * step; int j = (int)t; double f = t - j;
-            float a = x[Math.Min(j, x.Length - 1)], b = x[Math.Min(j + 1, x.Length - 1)];
-            y[i] = (float)(a + (b - a) * f);
-        }
-        return y;
-    }
+    static void Set(Biquad[] f, Action<Biquad[]> design) { design(f); f[1].CopyCoefs(f[0]); }
 
     void UpdateMic()
     {
         var c = M.Cab; double fs = SampleRate;
+        cab.SetMic(c.MicPos.Value);
         if (c.MicPos.Value != lpPos)
         {
             lpPos = c.MicPos.Value;
-            micShelf.HighShelf(fs, 2500, 2.5 - 10 * lpPos);   // cap = bright, cone = dark
-            micLp.LowPass(fs, 16000 - 9000 * lpPos, 0.7);
+            // only for user IRs and the acoustic channel: the built-in cabs are designed per position
+            double p = lpPos;
+            Set(micShelf, f => f[0].HighShelf(fs, 2500, 2.5 - 10 * p));   // cap = bright, cone = dark
+            Set(micLp, f => f[0].LowPass(fs, 16000 - 9000 * p, 0.7));
         }
         if (c.Distance.Value != lpDist)
         {
             lpDist = c.Distance.Value;
-            proximity.LowShelf(fs, 180, 3.5 - 8 * lpDist);     // proximity effect fades with distance
+            double d = lpDist;
+            Set(proximity, f => f[0].LowShelf(fs, 180, 3.5 - 8 * d));     // proximity effect fades with distance
         }
-        if (c.LowCut.Value != lpLow) { lpLow = c.LowCut.Value; lowCut.HighPass(fs, 20 * Math.Pow(15, lpLow), 0.707); }
-        if (c.HighCut.Value != lpHigh) { lpHigh = c.HighCut.Value; highCut.LowPass(fs, Math.Min(0.45 * fs, 3000 * Math.Pow(20000 / 3000.0, lpHigh)), 0.707); }
+        if (c.LowCut.Value != lpLow) { lpLow = c.LowCut.Value; double v = lpLow; Set(lowCut, f => f[0].HighPass(fs, 20 * Math.Pow(15, v), 0.707)); }
+        if (c.HighCut.Value != lpHigh) { lpHigh = c.HighCut.Value; double v = lpHigh; Set(highCut, f => f[0].LowPass(fs, Math.Min(0.45 * fs, 3000 * Math.Pow(20000 / 3000.0, v)), 0.707)); }
+    }
+
+    double Reflections((double T, double G)[] taps)
+    {
+        double fs = SampleRate, e = 0;
+        foreach (var (t, g) in taps) e += g * room.Read(fs * t);
+        return e;
     }
 
     public void Process(ReadOnlySpan<float> input, Span<float> l, Span<float> r)
@@ -187,23 +205,32 @@ public sealed class Rig
 
         amp.Process(buf);
 
-        if (M.Cab.Enabled)
+        // an acoustic guitar isn't played through a speaker: keep only the mic and room
+        bool acoustic = M.Amp.Channel == Channel.Acoustic;
+        bool cabOn = M.Cab.Enabled;
+        if (cabOn) UpdateMic();
+        if (cabOn && !acoustic) cab.Process(buf, l, r);
+        else { buf.CopyTo(l); buf.CopyTo(r); }
+        if (cabOn)
         {
-            // an acoustic guitar isn't played through a speaker: keep only the mic and room
-            if (M.Amp.Channel != Channel.Acoustic) cab.Process(buf);
-            UpdateMic();
-            double roomMix = M.Cab.Distance.Value * 0.3, fs = SampleRate;
+            bool micEq = acoustic || !cab.Positional;
+            double roomMix = M.Cab.Distance.Value * 0.3;
             for (int i = 0; i < n; i++)
             {
-                double x = buf[i];
-                room.Write(x);
-                x += roomMix * (room.Read(fs * 0.0031) * 0.6 - room.Read(fs * 0.0057) * 0.45 + room.Read(fs * 0.0089) * 0.3);
-                x = micLp.Process(micShelf.Process(proximity.Process(x)));
-                buf[i] = (float)highCut.Process(lowCut.Process(x));
+                double xl = l[i], xr = r[i];
+                room.Write(0.5 * (xl + xr));
+                double el = Reflections(RoomL), er = Reflections(RoomR);
+                for (int c = 0; c < 2; c++)
+                {
+                    double x = c == 0 ? xl : xr;
+                    double e = roomAp[c][1].Process(roomAp[c][0].Process(roomLp[c].LowPass(c == 0 ? el : er)));
+                    double y = proximity[c].Process(x + roomMix * e);
+                    if (micEq) y = micLp[c].Process(micShelf[c].Process(y));
+                    float o = (float)highCut[c].Process(lowCut[c].Process(y));
+                    if (c == 0) l[i] = o; else r[i] = o;
+                }
             }
         }
-
-        buf.CopyTo(l); buf.CopyTo(r);
         // the acoustic channel is a stereo pair of mics; its side skips the cab's mic and room
         var side = amp.AcousticSide(n);
         for (int i = 0; i < side.Length; i++) { l[i] += side[i]; r[i] -= side[i]; }
@@ -247,6 +274,8 @@ public static class FactoryPresets
         ("Blues Lead", S("amp.CHANNEL=1 amp.GAIN=0.6 amp.MIDDLE=0.7 od.ON=1 od.DRIVE=0.5 od.LEVEL=0.55 delay.ON=1 delay.TIME=0.5 delay.MIX=0.18 delay.FEEDBACK=0.25 reverb.ON=1 reverb.MIX=0.22 cab.MODEL=2")),
         ("Modern Metal", S("doubler.ON=1 amp.CHANNEL=2 amp.GAIN=0.55 amp.BASS=0.55 amp.MIDDLE=0.45 amp.TREBLE=0.62 amp.DEPTH=0.6 global.GATE=0.45 od.ON=1 od.DRIVE=0 od.LEVEL=0.85 od.TONE=0.6 cab.MODEL=0 cab.MIC POS=0.25")),
         ("Soaring Solo", S("amp.CHANNEL=2 amp.GAIN=0.7 amp.MIDDLE=0.7 amp.PRESENCE=0.55 od.ON=1 od.DRIVE=0.2 od.LEVEL=0.75 delay.ON=1 delay.TIME=0.66 delay.FEEDBACK=0.42 delay.MIX=0.3 delay.DUCK=0.6 delay.SPREAD=0.8 reverb.ON=1 reverb.DECAY=0.55 reverb.MIX=0.28")),
+        ("Lead II Rhythm", S("doubler.ON=1 amp.CHANNEL=4 amp.GAIN=0.5 amp.BASS=0.55 amp.MIDDLE=0.45 amp.TREBLE=0.6 amp.PRESENCE=0.55 amp.DEPTH=0.6 global.GATE=0.45 od.ON=1 od.DRIVE=0 od.LEVEL=0.85 od.TONE=0.6 cab.MODEL=0 cab.MIC POS=0.25")),
+        ("Lead II Solo", S("amp.CHANNEL=4 amp.GAIN=0.65 amp.MIDDLE=0.65 amp.PRESENCE=0.5 od.ON=1 od.DRIVE=0.2 od.LEVEL=0.75 delay.ON=1 delay.TIME=0.66 delay.FEEDBACK=0.42 delay.MIX=0.3 delay.DUCK=0.6 delay.SPREAD=0.8 reverb.ON=1 reverb.DECAY=0.55 reverb.MIX=0.28")),
         ("Fuzz Wall", S("amp.CHANNEL=1 amp.GAIN=0.4 fuzz.ON=1 fuzz.SUSTAIN=0.75 fuzz.TONE=0.45 phaser.ON=1 phaser.MIX=0.4 reverb.ON=1 reverb.MIX=0.25 cab.MODEL=0")),
         ("Rodent Grunge", S("doubler.ON=1 amp.CHANNEL=1 amp.GAIN=0.45 dist.ON=1 dist.DIST=0.65 dist.FILTER=0.4 chorus.ON=1 chorus.RATE=0.25 chorus.MIX=0.4 cab.MODEL=0")),
         ("Gazebo Acoustic", S("amp.CHANNEL=3 amp.GAIN=0.56 amp.BASS=0 amp.MIDDLE=0 amp.TREBLE=0.73 amp.PRESENCE=0.45 amp.DEPTH=0 amp.MASTER=0.5 cab.ON=0 comp.ON=1 comp.SUSTAIN=0.25 comp.ATTACK=0.6 comp.LEVEL=0.35 reverb.ON=1 reverb.DECAY=0.2 reverb.SIZE=0.5 reverb.PREDELAY=0.05 reverb.MOD=0.2 reverb.MIX=0.32")),

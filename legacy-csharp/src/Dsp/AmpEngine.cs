@@ -2,7 +2,8 @@ using System;
 
 namespace Jwala.Dsp;
 
-public enum Channel { Clean = 0, Crunch = 1, Lead = 2, Acoustic = 3 }
+/// <summary>LEAD II comes after Acoustic so saved presets keep their channel numbers.</summary>
+public enum Channel { Clean = 0, Crunch = 1, Lead = 2, Acoustic = 3, LeadII = 4 }
 
 /// <summary>Amp head knobs plus the global input/gate/output controls.</summary>
 public sealed class AmpParams
@@ -62,7 +63,9 @@ sealed class TriodeStage
 /// <summary>
 /// Preamp + tone stack + power amp, all at 4x oversampling. Oversampled-slot pedals
 /// (drives/fuzz) run inside the same oversampled region so they don't alias either.
-/// Channel.Acoustic swaps the tube stages for the acoustic-guitar simulator.
+/// Channel.Acoustic swaps the tube stages for the acoustic-guitar simulator; Channel.LeadII
+/// swaps the preamp stages for the circuit-level one in HiGain and the power stage for the
+/// one in PowerAmp, with its own tone stack values, all at 8x.
 /// </summary>
 public sealed class AmpEngine
 {
@@ -83,6 +86,15 @@ public sealed class AmpEngine
     Channel lastCh = (Channel)(-1);
     bool lastBright;
     readonly AcousticSim acoustic;
+    readonly HiGain hg;
+    readonly PowerAmp pa;
+    /// <summary>LEAD II's tone stack and power amp input high-pass, at its 8x rate.</summary>
+    readonly ToneStack hgTone;
+    Biquad hgHp;
+    /// <summary>The 2x stage that takes LEAD II from the 4x region up to 8x and back.</summary>
+    readonly HalfBandDoubler x2 = new();
+    /// <summary>Level out of LEAD II's tone stack into its power amp.</summary>
+    const double HgToneMakeup = 3.2;
 
     public AmpEngine(double sampleRate, AmpParams p, SampleEffect[] osPedals)
     {
@@ -95,6 +107,10 @@ public sealed class AmpEngine
         sagRel = 1 - Math.Exp(-1 / (fsOs * 0.18));
         smooth = 1 - Math.Exp(-1 / (sampleRate * 0.02));
         acoustic = new AcousticSim(sampleRate);
+        hg = new HiGain(fsOs * 2);
+        pa = new PowerAmp(fsOs * 2);
+        hgTone = new ToneStack(fsOs * 2, ToneStack.SLO);
+        hgHp.HighPass(fsOs * 2, 35, 0.7);
     }
 
     static double Db(double db) => Math.Pow(10, db / 20);
@@ -152,7 +168,25 @@ public sealed class AmpEngine
             return;
         }
         acousticBlock = false;
-        if (p.Channel != lastCh || p.Bright != lastBright) { lastCh = p.Channel; lastBright = p.Bright; ConfigureChannel(lastCh, lastBright); }
+        var chNow = p.Channel;
+        bool isHg = chNow == Channel.LeadII;
+        if (chNow != lastCh || p.Bright != lastBright)
+        {
+            if (isHg)
+            {
+                if (lastCh != Channel.LeadII) { hg.Reset(); pa.Reset(); hgHp.Reset(); x2.Reset(); }
+            }
+            else ConfigureChannel(chNow, p.Bright);
+            lastCh = chNow; lastBright = p.Bright;
+        }
+        if (isHg)
+        {
+            // its GAIN knob is a pot inside the preamp, not a level in front of it
+            hg.Set(p.Gain.Value, p.Bright, buf.Length, SampleRate);
+            // and its PRESENCE and DEPTH sit in the power amp's feedback loop
+            pa.Set(p.Presence.Value, p.Depth.Value);
+            hgTone.Set(p.Treble.Value, p.Middle.Value, p.Bass.Value);
+        }
         tone.Set(p.Treble.Value, p.Middle.Value, p.Bass.Value);
         if (p.Presence.Value != lastPres || p.Depth.Value != lastRes)
         {
@@ -164,7 +198,8 @@ public sealed class AmpEngine
 
         double g = p.Gain.Value;
         double gainDb = lastCh switch { Channel.Clean => -10 + 30 * g, Channel.Crunch => -6 + 34 * g, _ => 34 * g };
-        double tGain = Db(gainDb) * 4.0;               // DI level (~0.1-0.3 peak) -> grid volts scale
+        // DI level (~0.1-0.3 peak) -> grid volts scale; LEAD II takes real volts at its input jack
+        double tGain = isHg ? HiGain.InputVolts : Db(gainDb) * 4.0;
         double tMaster = Db(-16 + 26 * p.Master.Value); // power amp drive
         double chMakeup = lastCh == Channel.Clean ? 1.6 : 1.0;
         const double toneMakeup = 3.2;
@@ -180,6 +215,13 @@ public sealed class AmpEngine
                 double v = ob[k];
                 for (int e = 0; e < osPedals.Length; e++) v = osPedals[e].Run(v);
                 v *= sGain;
+                if (isHg)
+                {
+                    // the whole amp at twice the rate of the region around it
+                    var (w0, w1) = x2.Up(v);
+                    ob[k] = x2.Down(HgSample(w0), HgSample(w1));
+                    continue;
+                }
                 double first = 0;
                 for (int s = 0; s < stageCount; s++)
                 {
@@ -201,5 +243,14 @@ public sealed class AmpEngine
             }
             buf[n] = (float)os.Down(ob);
         }
+    }
+
+    /// <summary>One LEAD II sample at its 8x rate: preamp, tone stack, power amp.</summary>
+    double HgSample(double w)
+    {
+        // the preamp's rail droops a little with the power amp's supply
+        double t = hg.Process(w) * pa.Rail;
+        t = hgTone.Process(t) * HgToneMakeup;
+        return pa.Process(hgHp.Process(t) * sMaster);
     }
 }

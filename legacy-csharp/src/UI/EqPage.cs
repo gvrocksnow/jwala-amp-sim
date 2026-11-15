@@ -75,10 +75,11 @@ sealed class EqPage : WidgetSurface
         double fs = Fs;
         const int n = 180;
         var pts = new PointF[n + 1];
+        var resp = GraphicEq.Response(v, fs);
         for (int k = 0; k <= n; k++)
         {
             double f = 20 * Math.Pow(1000, (double)k / n);
-            pts[k] = new PointF(Fx(f), Dy(Math.Clamp(GraphicEq.ResponseDb(v, fs, Math.Min(f, 0.499 * fs)), -40, 40)));
+            pts[k] = new PointF(Fx(f), Dy(Math.Clamp(resp(Math.Min(f, 0.499 * fs)), -40, 40)));
         }
         var clip = g.Clip;
         g.SetClip(RectangleF.Inflate(scr, -3, -3), CombineMode.Intersect);

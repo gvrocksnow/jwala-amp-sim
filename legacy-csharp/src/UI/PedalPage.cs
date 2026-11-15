@@ -120,7 +120,7 @@ sealed class PedalPage : WidgetSurface
     static float Unit(RectangleF b) => b.Height * 200f / 360f;
     static float KnobSize(RectangleF b) => Unit(b) * 0.24f;
 
-    /// <summary>Knobs in two rows: small pedals 2 per row (odd one centred), wide pedals 4 + 3.</summary>
+    /// <summary>Knobs in two rows: small pedals 2 per row (odd one centred), wide pedals 4 per row.</summary>
     static PointF KnobCenter(Effect e, RectangleF b, int k)
     {
         int n = e.Params.Length, perRow = e.Wide ? 4 : 2;

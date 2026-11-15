@@ -29,9 +29,25 @@ public struct Biquad
         return 10 * Math.Log10(Math.Max((nr * nr + ni * ni) / Math.Max(dr * dr + di * di, 1e-30), 1e-30));
     }
 
+    /// <summary>Power gain at a frequency given as cos w, sin w, cos 2w, sin 2w (for designing IRs fast).</summary>
+    public readonly double PowerAt(double c1, double s1, double c2, double s2)
+    {
+        double nr = b0 + b1 * c1 + b2 * c2, ni = -(b1 * s1 + b2 * s2);
+        double dr = 1 + a1 * c1 + a2 * c2, di = -(a1 * s1 + a2 * s2);
+        return (nr * nr + ni * ni) / Math.Max(dr * dr + di * di, 1e-30);
+    }
+
     void Set(double nb0, double nb1, double nb2, double na0, double na1, double na2)
     {
         b0 = nb0 / na0; b1 = nb1 / na0; b2 = nb2 / na0; a1 = na1 / na0; a2 = na2 / na0;
+    }
+
+    /// <summary>Bilinear transform of the analog section (b0 + b1 s + b2 s^2) / (a0 + a1 s + a2 s^2).</summary>
+    public void Analog(double fs, double ab0, double ab1, double ab2, double aa0, double aa1, double aa2)
+    {
+        double k = 2 * fs, kk = k * k;
+        Set(ab0 + ab1 * k + ab2 * kk, 2 * (ab0 - ab2 * kk), ab0 - ab1 * k + ab2 * kk,
+            aa0 + aa1 * k + aa2 * kk, 2 * (aa0 - aa2 * kk), aa0 - aa1 * k + aa2 * kk);
     }
 
     public void LowPass(double fs, double f, double q)
@@ -58,6 +74,31 @@ public struct Biquad
         double A = Math.Pow(10, db / 40), w = 2 * Math.PI * f / fs, c = Math.Cos(w), al = Math.Sin(w) / (2 * q);
         Set(1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A);
     }
+
+    /// <summary>
+    /// Peaking bell matched to the analog prototype (Vicanek, "Matched Second Order Digital
+    /// Filters", 2016): impulse-invariant poles, zeros solved so the gain is exactly <paramref name="db"/> at
+    /// <paramref name="f"/> with the peak sitting there. Unlike the bilinear Peak, bells near Nyquist keep
+    /// their analog width and shape instead of being squeezed, so the top bands stay open and airy.
+    /// </summary>
+    public void PeakMatched(double fs, double f, double q, double db)
+    {
+        double g = Math.Pow(10, db / 20), w = 2 * Math.PI * f / fs;
+        // RBJ-symmetric prototype: pole Q = Q·√G, so boosts and cuts mirror each other
+        double z = 1 / (2 * q * Math.Sqrt(g)), e = Math.Exp(-z * w);
+        double na1 = z <= 1 ? -2 * e * Math.Cos(Math.Sqrt(1 - z * z) * w) : -2 * e * Math.Cosh(Math.Sqrt(z * z - 1) * w);
+        double na2 = e * e;
+        double ca0 = Sq(1 + na1 + na2), ca1 = Sq(1 - na1 + na2), ca2 = -4 * na2;
+        double p1 = Sq(Math.Sin(w / 2)), p0 = 1 - p1, p2 = 4 * p0 * p1, g2 = g * g;
+        double r1 = (ca0 * p0 + ca1 * p1 + ca2 * p2) * g2;
+        double r2 = (-ca0 + ca1 + 4 * (p0 - p1) * ca2) * g2;
+        double cb0 = ca0, cb2 = (r1 - r2 * p1 - cb0) / (4 * p1 * p1), cb1 = r2 + cb0 + 4 * (p1 - p0) * cb2;
+        double s0 = Math.Sqrt(cb0), s1 = Math.Sqrt(Math.Max(cb1, 0)), wq = 0.5 * (s0 + s1);
+        double nb0 = 0.5 * (wq + Math.Sqrt(Math.Max(wq * wq + cb2, 0))), nb1 = 0.5 * (s0 - s1), nb2 = -cb2 / (4 * nb0);
+        Set(nb0, nb1, nb2, 1, na1, na2);
+    }
+
+    static double Sq(double x) => x * x;
 
     public void LowShelf(double fs, double f, double db)
     {
@@ -92,14 +133,26 @@ public struct OnePole
 /// </summary>
 public sealed class ToneStack
 {
-    // JCM800-ish component values
-    const double R1 = 220e3, R2 = 1e6, R3 = 22e3, R4 = 33e3, C1 = 470e-12, C2 = 22e-9, C3 = 22e-9;
+    /// <summary>Component values as [treble pot, bass pot, mid pot, slope resistor, treble cap, bass cap,
+    /// mid cap]. JCM800-ish: the clean, crunch and lead channels.</summary>
+    public static readonly double[] JCM800 = { 220e3, 1e6, 22e3, 33e3, 470e-12, 22e-9, 22e-9 };
+    /// <summary>The SLO-family stack that goes with the LEAD II preamp: a larger slope resistor, so the
+    /// mids scoop deeper.</summary>
+    public static readonly double[] SLO = { 250e3, 1e6, 25e3, 47e3, 470e-12, 22e-9, 22e-9 };
     readonly double fs;
+    readonly double R1, R2, R3, R4, C1, C2, C3;
     double B0, B1, B2, B3, A1, A2, A3;
     double x1, x2, x3, y1, y2, y3;
     double lt = -1, lm = -1, ll = -1;
 
-    public ToneStack(double sampleRate) { fs = sampleRate; Set(0.5, 0.5, 0.5); }
+    public ToneStack(double sampleRate) : this(sampleRate, JCM800) { }
+
+    public ToneStack(double sampleRate, double[] parts)
+    {
+        fs = sampleRate;
+        (R1, R2, R3, R4, C1, C2, C3) = (parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]);
+        Set(0.5, 0.5, 0.5);
+    }
 
     /// <param name="treble">0..1</param><param name="mid">0..1</param><param name="bass">0..1</param>
     public void Set(double treble, double mid, double bass)
