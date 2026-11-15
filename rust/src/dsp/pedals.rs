@@ -60,26 +60,66 @@ pub fn make_pre(id: &str) -> Box<dyn SampleFx> {
     }
 }
 
-/// Studio-style optical-ish compressor with parallel blend.
+/// Sidechain low cut: keeps the low strings from steering the whole gain.
+const COMP_SC_HZ: f64 = 110.0;
+/// The detector reports the highest peak of the last one to two windows of this length. A window
+/// is longer than half a cycle of the low E, so the level of a held note is flat instead of
+/// rippling at twice the note's pitch.
+const COMP_HOLD_S: f64 = 0.007;
+/// Above this the wet path gives back some of the top that gain reduction takes off the pick.
+const COMP_AIR_HZ: f64 = 2200.0;
+
+/// Smooth sustainer with parallel blend. The level is read from a held peak of the low-cut
+/// sidechain and all the timing is done on the gain reduction in dB, so held notes are not
+/// distorted by the gain wobbling within each cycle. Release is program dependent: a pick
+/// transient lets go quickly, while a passage that has been held down recovers slowly, so notes
+/// bloom without pumping. Highs are reduced a little less than the rest, keeping the sparkle.
 #[derive(Default)]
 pub struct Compressor {
-    env: f64,
-    gain: f64,
-    atk: f64,
-    rel: f64,
+    sc_hp: OnePole,
+    air: OnePole,
     fs: f64,
+    /// Highest sidechain peak in the window being filled, and in the one before it.
+    peak: f64,
+    peak_prev: f64,
+    hold_left: u32,
+    hold_len: u32,
+    /// Gain reduction in dB: the quick follower, and the slow one that remembers held passages.
+    g_fast: f64,
+    g_slow: f64,
+    atk: f64,
+    rel_fast: f64,
+    slow_atk: f64,
+    slow_rel: f64,
     thr: f64,
     slope: f64,
     makeup: f64,
     blend: f64,
+    /// Smoothed makeup and blend, so turning a knob does not zipper.
+    s_makeup: f64,
+    s_blend: f64,
+    smooth: f64,
+    primed: bool,
 }
 
 impl SampleFx for Compressor {
     fn init(&mut self, fs: f64) {
         self.fs = fs;
-        self.env = 0.0;
-        self.gain = 1.0;
-        self.rel = coef(fs, 0.25);
+        self.sc_hp.set_low_pass(fs, COMP_SC_HZ);
+        self.air.set_low_pass(fs, COMP_AIR_HZ);
+        self.sc_hp.reset();
+        self.air.reset();
+        self.peak = 0.0;
+        self.peak_prev = 0.0;
+        self.hold_len = (fs * COMP_HOLD_S) as u32;
+        self.hold_left = self.hold_len;
+        self.g_fast = 0.0;
+        self.g_slow = 0.0;
+        self.rel_fast = coef(fs, 0.07);
+        self.slow_atk = coef(fs, 0.25);
+        self.slow_rel = coef(fs, 0.6);
+        self.smooth = coef(fs, 0.02);
+        self.primed = false;
     }
     fn update(&mut self, p: &[f32]) {
         let s = p[0] as f64;
@@ -89,24 +129,127 @@ impl SampleFx for Compressor {
         self.slope = 1.0 - 1.0 / ratio;
         self.makeup = db(-self.thr * self.slope * 0.55 + (-12.0 + 24.0 * p[2] as f64));
         self.blend = p[3] as f64;
+        if !self.primed {
+            self.primed = true;
+            self.s_makeup = self.makeup;
+            self.s_blend = self.blend;
+        }
     }
     fn tick(&mut self, x: f64) -> f64 {
-        let a = x.abs();
-        self.env += (if a > self.env { self.atk } else { self.rel }) * (a - self.env);
-        let lvl = 20.0 * (self.env + 1e-9).log10();
-        let over = lvl - self.thr;
-        // soft knee (6 dB)
-        let gr = if over <= -3.0 {
+        // level: held peak of the low-cut sidechain
+        let a = self.sc_hp.high_pass(x).abs();
+        if self.hold_left == 0 {
+            self.hold_left = self.hold_len;
+            self.peak_prev = self.peak;
+            self.peak = 0.0;
+        }
+        self.hold_left -= 1;
+        self.peak = self.peak.max(a);
+        let over = 20.0 * (self.peak.max(self.peak_prev) + 1e-9).log10() - self.thr;
+        // soft knee (12 dB)
+        let target = if over <= -6.0 {
             0.0
-        } else if over >= 3.0 {
+        } else if over >= 6.0 {
             over * self.slope
         } else {
-            self.slope * (over + 3.0) * (over + 3.0) / 12.0
+            self.slope * (over + 6.0) * (over + 6.0) / 24.0
         };
-        let tg = db(-gr);
-        self.gain += 0.02 * (tg - self.gain);
-        let y = x * self.gain * self.makeup;
-        x * (1.0 - self.blend) + y * self.blend
+        // timing, in dB
+        self.g_fast += (if target > self.g_fast { self.atk } else { self.rel_fast }) * (target - self.g_fast);
+        self.g_slow += (if self.g_fast > self.g_slow { self.slow_atk } else { self.slow_rel }) * (self.g_fast - self.g_slow);
+        let gr = self.g_fast.max(0.7 * self.g_slow);
+        let g = db(-gr);
+        // the top is turned down a little less, by up to 4 dB
+        let hi = self.air.high_pass(x);
+        self.s_makeup += self.smooth * (self.makeup - self.s_makeup);
+        self.s_blend += self.smooth * (self.blend - self.s_blend);
+        let y = g * (x + (0.03 * gr).min(0.6) * hi) * self.s_makeup;
+        x + (y - x) * self.s_blend
+    }
+}
+
+#[cfg(test)]
+mod compressor_tests {
+    use super::*;
+
+    const FS: f64 = 48000.0;
+    const N: usize = 4800; // a tenth of a second: 10 Hz bins
+
+    fn make(sustain: f32, attack: f32) -> Compressor {
+        let mut c = Compressor::default();
+        c.init(FS);
+        c.update(&[sustain, attack, 0.5, 1.0, 0.0, 0.0, 0.0, 0.0]);
+        c
+    }
+
+    /// Steady-state output for a sine, after a second of settling.
+    fn render(c: &mut Compressor, hz: f64, amp: f64) -> Vec<f64> {
+        let w = 2.0 * PI * hz / FS;
+        (0..FS as usize + N).map(|i| c.tick(amp * (w * i as f64).sin())).skip(FS as usize).collect()
+    }
+
+    fn bin(x: &[f64], hz: f64) -> f64 {
+        let w = 2.0 * PI * hz / FS;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, v) in x.iter().enumerate() {
+            re += v * (w * i as f64).cos();
+            im += v * (w * i as f64).sin();
+        }
+        (re * re + im * im) / (x.len() as f64 * x.len() as f64) * 4.0
+    }
+
+    fn rms(x: &[f64]) -> f64 {
+        (x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64).sqrt()
+    }
+
+    /// A held low note comes out clean even at the fastest attack and heavy squeeze: the gain
+    /// must not wobble inside each cycle.
+    #[test]
+    fn low_notes_stay_clean() {
+        for hz in [80.0, 110.0, 220.0] {
+            let x = render(&mut make(0.8, 0.0), hz, 0.3);
+            let h1 = bin(&x, hz);
+            let dist: f64 = (2..=7).map(|k| bin(&x, hz * k as f64)).sum();
+            let thd = 10.0 * (dist / h1).max(1e-30).log10();
+            println!("{hz:5.0} Hz  THD {thd:6.1} dB");
+            assert!(thd < -55.0, "distortion on a {hz} Hz note: {thd:.1} dB");
+        }
+    }
+
+    /// 30 dB of playing dynamics come out as a few dB.
+    #[test]
+    fn evens_out_dynamics() {
+        let loud = rms(&render(&mut make(0.7, 0.35), 440.0, 0.5));
+        let soft = rms(&render(&mut make(0.7, 0.35), 440.0, 0.5 * db(-30.0)));
+        let range = 20.0 * (loud / soft).log10();
+        println!("loud {loud:.3}  soft {soft:.3}  range {range:.1} dB");
+        assert!((2.0..8.0).contains(&range), "{range:.1} dB left of 30");
+    }
+
+    /// A short hit lets go quickly; the same level held for seconds recovers slowly.
+    #[test]
+    fn release_follows_the_programme() {
+        let w = 2.0 * PI * 440.0 / FS;
+        let recovery = |hold_s: f64| {
+            let mut c = make(0.7, 0.0);
+            for i in 0..(FS * hold_s) as usize {
+                c.tick(0.5 * (w * i as f64).sin());
+            }
+            for _ in 0..(FS * 0.15) as usize {
+                c.tick(0.0);
+            }
+            c.g_fast.max(0.7 * c.g_slow)
+        };
+        let (short, long) = (recovery(0.03), recovery(3.0));
+        println!("gain reduction 150 ms after: short hit {short:.1} dB, held {long:.1} dB");
+        assert!(short < 7.0 && long > 2.0 * short, "short {short:.1} dB, held {long:.1} dB");
+    }
+
+    #[test]
+    fn silence_stays_silent() {
+        let mut c = make(1.0, 0.0);
+        let peak = (0..20000).map(|_| c.tick(0.0).abs()).fold(0.0, f64::max);
+        assert!(peak < 1e-9, "{peak} from silence");
     }
 }
 
