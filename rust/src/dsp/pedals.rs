@@ -143,30 +143,103 @@ impl SampleFx for Overdrive {
     }
 }
 
-/// Op-amp hard clipper (rodent style) with sweepable filter.
+/// ln(cosh(u)), the antiderivative of tanh, written so it cannot overflow.
+#[inline]
+fn ln_cosh(u: f64) -> f64 {
+    let a = u.abs();
+    a + (-2.0 * a).exp().ln_1p() - std::f64::consts::LN_2
+}
+
+/// Soft clipper with first-order antiderivative anti-aliasing: the output is the clipping curve
+/// averaged over the step from the previous sample to this one, which takes most of the aliasing
+/// out of hard-driven edges. The curve is tanh on top and a lower, softer tanh underneath
+/// (`floor` is how far the bottom half can swing; 1.0 makes it symmetric).
+#[derive(Default)]
+struct SoftClip {
+    x1: f64,
+    f1: f64,
+}
+
+impl SoftClip {
+    #[inline]
+    fn curve(u: f64, floor: f64) -> f64 {
+        if u >= 0.0 { u.tanh() } else { floor * (u / floor).tanh() }
+    }
+    #[inline]
+    fn integral(u: f64, floor: f64) -> f64 {
+        if u >= 0.0 { ln_cosh(u) } else { floor * floor * ln_cosh(u / floor) }
+    }
+    /// Starts at rest with `x` at the input, so a biased stage does not open with a blip.
+    fn reset(&mut self, x: f64, floor: f64) {
+        self.x1 = x;
+        self.f1 = Self::integral(x, floor);
+    }
+    #[inline]
+    fn tick(&mut self, x: f64, floor: f64) -> f64 {
+        let f = Self::integral(x, floor);
+        let dx = x - self.x1;
+        let y = if dx.abs() < 1e-5 { Self::curve(0.5 * (x + self.x1), floor) } else { (f - self.f1) / dx };
+        self.x1 = x;
+        self.f1 = f;
+        y
+    }
+}
+
+/// Resting bias on the distortion's first stage.
+const DIST_BIAS: f64 = 0.2;
+
+/// Two cascaded soft-clipping stages, valve fashion, with a sweepable filter. The lows are thinned
+/// before the first stage (more so as DIST rises) so chords stay clear, and come back through a
+/// gently driven parallel band so the sound stays thick. The first stage's bias follows the playing
+/// level, which shifts the duty cycle and keeps second harmonic in the sound however hard it is
+/// driven.
 #[derive(Default)]
 pub struct Distortion {
     hp: OnePole,
-    gbw: OnePole,
+    low: OnePole,
+    pre: OnePole,
+    mid: OnePole,
+    couple: OnePole,
+    dc: OnePole,
     filt: OnePole,
     filt2: OnePole,
+    c1: SoftClip,
+    c2: SoftClip,
     fs: f64,
-    g: f64,
+    env: f64,
+    atk: f64,
+    rel: f64,
+    g1: f64,
+    g2: f64,
+    tight: f64,
+    g_low: f64,
     lvl: f64,
 }
 
 impl SampleFx for Distortion {
     fn init(&mut self, fs: f64) {
         self.fs = fs;
-        self.hp.set_low_pass(fs, 70.0);
-        self.hp.reset();
-        self.gbw.reset();
-        self.filt.reset();
-        self.filt2.reset();
+        self.hp.set_low_pass(fs, 60.0);
+        self.low.set_low_pass(fs, 220.0);
+        self.pre.set_low_pass(fs, 9000.0);
+        self.mid.set_low_pass(fs, 5500.0);
+        self.couple.set_low_pass(fs, 90.0);
+        self.dc.set_low_pass(fs, 20.0);
+        for f in [&mut self.hp, &mut self.low, &mut self.pre, &mut self.mid, &mut self.couple, &mut self.dc, &mut self.filt, &mut self.filt2] {
+            f.reset();
+        }
+        self.c1.reset(DIST_BIAS, 0.7);
+        self.c2.reset(0.0, 0.85);
+        self.env = 0.0;
+        self.atk = coef(fs, 0.003);
+        self.rel = coef(fs, 0.08);
     }
     fn update(&mut self, p: &[f32]) {
-        self.g = log(p[0] as f64, 2.0, 2200.0);
-        self.gbw.set_low_pass(self.fs, (4e6 / self.g).clamp(2500.0, 20000.0)); // op-amp runs out of bandwidth at high gain
+        let d = p[0] as f64;
+        self.g1 = log(d, 3.0, 250.0);
+        self.g2 = 2.0 + 4.0 * d;
+        self.tight = 0.4 + 0.45 * d;
+        self.g_low = 2.0 + 0.1 * self.g1;
         let fc = log(1.0 - p[1] as f64, 500.0, 16000.0);
         self.filt.set_low_pass(self.fs, fc);
         self.filt2.set_low_pass(self.fs, fc * 1.6);
@@ -174,10 +247,82 @@ impl SampleFx for Distortion {
     }
     fn tick(&mut self, x: f64) -> f64 {
         let hp = self.hp.high_pass(x);
-        let mut v = self.gbw.low_pass(hp * self.g);
-        v = 0.65 * v / (1.0 + (v / 0.65).abs().powf(2.5)).powf(0.4); // silicon diodes to ground
+        let low = self.low.low_pass(hp);
+        let pre = self.pre.low_pass(hp - self.tight * low) * self.g1;
+        let a = pre.abs();
+        self.env += (if a > self.env { self.atk } else { self.rel }) * (a - self.env);
+        // first stage: uneven halves, bias riding on the envelope
+        let s1 = self.c1.tick(pre + DIST_BIAS + 0.3 * self.env, 0.7) - DIST_BIAS.tanh();
+        let c = self.couple.high_pass(self.mid.low_pass(s1));
+        // second stage, leaning the other way
+        let s2 = self.dc.high_pass(self.c2.tick(-c * self.g2, 0.85));
+        let v = -0.44 * s2 + 0.22 * (low * self.g_low).tanh();
         let f1 = self.filt.low_pass(v);
         self.filt2.low_pass(f1) * self.lvl
+    }
+}
+
+#[cfg(test)]
+mod distortion_tests {
+    use super::*;
+
+    const FS: f64 = 192000.0; // the oversampled rate the pedal runs at in a 48 kHz session
+    const F0: usize = 1240;
+    const N: usize = 19200; // a tenth of a second: 10 Hz bins, F0 lands exactly on one
+
+    fn knobs(dist: f32) -> [f32; 8] {
+        [dist, 0.45, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0]
+    }
+
+    /// Steady-state output for a sine of amplitude 0.15 at F0, after a second of settling.
+    fn render(dist: f32) -> Vec<f64> {
+        let mut d = Distortion::default();
+        d.init(FS);
+        d.update(&knobs(dist));
+        let w = 2.0 * PI * F0 as f64 / FS;
+        (0..FS as usize + N).map(|i| d.tick(0.15 * (w * i as f64).sin())).skip(FS as usize).collect()
+    }
+
+    /// Power in the bin at `hz` (a multiple of 10).
+    fn bin(x: &[f64], hz: usize) -> f64 {
+        let w = 2.0 * PI * hz as f64 / FS;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, v) in x.iter().enumerate() {
+            re += v * (w * i as f64).cos();
+            im += v * (w * i as f64).sin();
+        }
+        (re * re + im * im) / (x.len() as f64 * x.len() as f64) * 4.0
+    }
+
+    /// Second harmonic stays in the sound at every drive setting, and what lands below 20 kHz
+    /// without being a harmonic (aliasing) stays far under the harmonics.
+    #[test]
+    fn rich_and_clean_at_every_drive() {
+        for dist in [0.25f32, 0.5, 0.75, 1.0] {
+            let x = render(dist);
+            let (mut harm, mut other) = (0.0, 0.0);
+            for hz in (20..20000).step_by(10) {
+                let pw = bin(&x, hz);
+                if hz % F0 == 0 { harm += pw } else { other += pw }
+            }
+            let dbr = |a: f64, b: f64| 10.0 * (a / b).max(1e-30).log10();
+            let (h2, alias) = (dbr(bin(&x, 2 * F0), bin(&x, F0)), dbr(other, harm));
+            let rms = (x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64).sqrt();
+            println!("DIST {dist:.2}  rms {rms:.3}  H2 {h2:6.1} dB  alias {alias:6.1} dB");
+            assert!(h2 > -30.0, "no second harmonic at DIST {dist}: {h2:.1} dB");
+            assert!(alias < -80.0, "aliasing at DIST {dist}: {alias:.1} dB");
+            assert!((0.05..0.12).contains(&rms), "level at DIST {dist}: {rms}");
+        }
+    }
+
+    /// Silence in gives silence out: the biased first stage must not open with a blip.
+    #[test]
+    fn silence_stays_silent() {
+        let mut d = Distortion::default();
+        d.init(FS);
+        d.update(&knobs(1.0));
+        let peak = (0..20000).map(|_| d.tick(0.0).abs()).fold(0.0, f64::max);
+        assert!(peak < 1e-9, "{peak} from silence");
     }
 }
 
