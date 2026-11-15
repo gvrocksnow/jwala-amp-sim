@@ -8,9 +8,9 @@ pub type State = HashMap<String, f32>;
 
 /// Factory presets: partial states; unspecified values use defaults, effects off.
 pub const FACTORY: [(&str, &str); 14] = [
-    ("Init", ""),
+    ("Init", "amp.CHANNEL=0 amp.DEPTH=0.502 amp.GAIN=0.5 amp.MIDDLE=0.495 amp.TREBLE=0.5"),
     ("Glass Clean", "amp.BASS=0.55 amp.BRIGHT=1 amp.CHANNEL=0 amp.GAIN=0.45 amp.MIDDLE=0.45 amp.TREBLE=0.65 cab.MODEL=1 chorus.MIX=0.35 chorus.ON=1 comp.ON=1 comp.SUSTAIN=0.45 delay.MIX=0.22 delay.ON=1 delay.TIME=0.62 reverb.ON=1 reverb.SHIMMER=0.595"),
-    ("Ambient Shimmer", "amp.BASS=0.762 amp.CHANNEL=2 amp.DEPTH=0.375 amp.GAIN=0.23 amp.MASTER=0.805 amp.MIDDLE=0.25 amp.PRESENCE=0.243 amp.TREBLE=0.713 cab.MIC POS=0.731 cab.MODEL=1 comp.ON=1 delay.FEEDBACK=0.55 delay.MIX=0.35 delay.MOD=0.45 delay.SPREAD=1 delay.TIME=0.754 od.ON=1 reverb.DECAY=0.51 reverb.MIX=0.55 reverb.ON=1 reverb.PREDELAY=0.3 reverb.SHIMMER=0.45 reverb.SIZE=0.9"),
+    ("Ambient Shimmer", "amp.BASS=0.762 amp.CHANNEL=0 amp.DEPTH=0.375 amp.GAIN=0.23 amp.MASTER=0.805 amp.MIDDLE=0.25 amp.PRESENCE=0.243 amp.TREBLE=0.713 cab.MIC POS=0.731 cab.MODEL=1 comp.ON=1 delay.FEEDBACK=0.55 delay.MIX=0.35 delay.MOD=0.45 delay.SPREAD=1 delay.TIME=0.754 reverb.DECAY=0.51 reverb.MIX=0.55 reverb.ON=1 reverb.PREDELAY=0.3 reverb.SHIMMER=0.563 reverb.SIZE=0.9"),
     ("Classic Crunch", "amp.GAIN=0.55 amp.MIDDLE=0.7 amp.PRESENCE=0.55 doubler.AMOUNT=0.4 doubler.ON=1 reverb.DECAY=0.3 reverb.MIX=0.18 reverb.ON=1"),
     ("Blues Lead", "amp.MIDDLE=0.7 cab.MODEL=2 delay.FEEDBACK=0.25 delay.MIX=0.18 delay.ON=1 delay.TIME=0.5 od.DRIVE=0.5 od.LEVEL=0.55 od.ON=1 reverb.MIX=0.22 reverb.ON=1"),
     ("Lead II Rhythm", "amp.BASS=0.55 amp.CHANNEL=4 amp.DEPTH=0.6 amp.GAIN=0.5 amp.MIDDLE=0.45 amp.PRESENCE=0.55 cab.MIC POS=0.25 doubler.ON=1 od.DRIVE=0 od.LEVEL=0.85 od.ON=1 od.TONE=0.6"),
