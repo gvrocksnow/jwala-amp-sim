@@ -7,7 +7,7 @@ use std::path::PathBuf;
 pub type State = HashMap<String, f32>;
 
 /// Factory presets: partial states; unspecified values use defaults, effects off.
-pub const FACTORY: [(&str, &str); 12] = [
+pub const FACTORY: [(&str, &str); 14] = [
     ("Init", ""),
     ("Glass Clean", "amp.CHANNEL=0 amp.GAIN=0.45 amp.BASS=0.55 amp.MIDDLE=0.45 amp.TREBLE=0.65 amp.BRIGHT=1 comp.ON=1 comp.SUSTAIN=0.45 chorus.ON=1 chorus.MIX=0.35 delay.ON=1 delay.TIME=0.62 delay.MIX=0.22 reverb.ON=1 reverb.MIX=0.3 cab.MODEL=1"),
     ("Ambient Shimmer", "amp.CHANNEL=0 amp.GAIN=0.4 amp.TREBLE=0.6 comp.ON=1 delay.ON=1 delay.TIME=0.72 delay.FEEDBACK=0.55 delay.MIX=0.35 delay.MOD=0.45 delay.SPREAD=1 reverb.ON=1 reverb.DECAY=0.85 reverb.SIZE=0.9 reverb.SHIMMER=0.45 reverb.MIX=0.55 reverb.PREDELAY=0.3 cab.MODEL=1"),
@@ -15,7 +15,9 @@ pub const FACTORY: [(&str, &str); 12] = [
     ("Blues Lead", "amp.CHANNEL=1 amp.GAIN=0.6 amp.MIDDLE=0.7 od.ON=1 od.DRIVE=0.5 od.LEVEL=0.55 delay.ON=1 delay.TIME=0.5 delay.MIX=0.18 delay.FEEDBACK=0.25 reverb.ON=1 reverb.MIX=0.22 cab.MODEL=2"),
     ("Modern Metal", "doubler.ON=1 amp.CHANNEL=2 amp.GAIN=0.55 amp.BASS=0.55 amp.MIDDLE=0.45 amp.TREBLE=0.62 amp.DEPTH=0.6 global.GATE=0.45 od.ON=1 od.DRIVE=0 od.LEVEL=0.85 od.TONE=0.6 cab.MODEL=0 cab.MIC POS=0.25"),
     ("Soaring Solo", "amp.CHANNEL=2 amp.GAIN=0.7 amp.MIDDLE=0.7 amp.PRESENCE=0.55 od.ON=1 od.DRIVE=0.2 od.LEVEL=0.75 delay.ON=1 delay.TIME=0.66 delay.FEEDBACK=0.42 delay.MIX=0.3 delay.DUCK=0.6 delay.SPREAD=0.8 reverb.ON=1 reverb.DECAY=0.55 reverb.MIX=0.28"),
-    ("Fuzz Wall", "amp.CHANNEL=1 amp.GAIN=0.4 fuzz.ON=1 fuzz.SUSTAIN=0.75 fuzz.TONE=0.45 phaser.ON=1 phaser.MIX=0.4 reverb.ON=1 reverb.MIX=0.25 cab.MODEL=0"),
+    ("Lead II Rhythm", "doubler.ON=1 amp.CHANNEL=4 amp.GAIN=0.5 amp.BASS=0.55 amp.MIDDLE=0.45 amp.TREBLE=0.6 amp.PRESENCE=0.55 amp.DEPTH=0.6 global.GATE=0.45 od.ON=1 od.DRIVE=0 od.LEVEL=0.85 od.TONE=0.6 cab.MODEL=0 cab.MIC POS=0.25"),
+    ("Lead II Solo", "amp.CHANNEL=4 amp.GAIN=0.65 amp.MIDDLE=0.65 amp.PRESENCE=0.5 od.ON=1 od.DRIVE=0.2 od.LEVEL=0.75 delay.ON=1 delay.TIME=0.66 delay.FEEDBACK=0.42 delay.MIX=0.3 delay.DUCK=0.6 delay.SPREAD=0.8 reverb.ON=1 reverb.DECAY=0.55 reverb.MIX=0.28"),
+    ("Fuzz Wall","amp.CHANNEL=1 amp.GAIN=0.4 fuzz.ON=1 fuzz.SUSTAIN=0.75 fuzz.TONE=0.45 phaser.ON=1 phaser.MIX=0.4 reverb.ON=1 reverb.MIX=0.25 cab.MODEL=0"),
     ("Rodent Grunge", "doubler.ON=1 amp.CHANNEL=1 amp.GAIN=0.45 dist.ON=1 dist.DIST=0.65 dist.FILTER=0.4 chorus.ON=1 chorus.RATE=0.25 chorus.MIX=0.4 cab.MODEL=0"),
     ("Acoustic 1", "amp.CHANNEL=3 amp.GAIN=0.56 amp.BASS=0 amp.MIDDLE=0 amp.TREBLE=0.73 amp.PRESENCE=0.45 amp.DEPTH=0 amp.MASTER=0.5 cab.ON=0 comp.ON=1 comp.SUSTAIN=0.25 comp.ATTACK=0.6 comp.LEVEL=0.35 reverb.ON=1 reverb.DECAY=0.2 reverb.SIZE=0.5 reverb.PREDELAY=0.05 reverb.MOD=0.2 reverb.MIX=0.32"),
     ("Acoustic 2", "amp.CHANNEL=3 amp.GAIN=0.85 amp.BASS=0.2 amp.MIDDLE=0.87 amp.TREBLE=1 amp.PRESENCE=0.36 amp.DEPTH=0 amp.MASTER=0.5 cab.ON=0 comp.ON=1 comp.SUSTAIN=0.25 comp.ATTACK=0.6 comp.LEVEL=0.35 reverb.ON=1 reverb.DECAY=0.35 reverb.SIZE=0.5 reverb.PREDELAY=0.05 reverb.MOD=0.2 reverb.MIX=0.35"),
