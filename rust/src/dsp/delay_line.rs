@@ -24,6 +24,12 @@ impl DelayLine {
         self.buf[self.w] = x as f32;
     }
 
+    /// Whole-sample read without interpolation (for fixed-length allpasses).
+    #[inline]
+    pub fn tap(&self, delay: usize) -> f64 {
+        self.buf[self.w.wrapping_sub(delay) & self.mask] as f64
+    }
+
     #[inline]
     pub fn read(&self, delay: f64) -> f64 {
         let delay = delay.clamp(1.0, self.capacity() as f64);

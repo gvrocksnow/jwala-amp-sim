@@ -625,87 +625,184 @@ impl StereoFx for Delay {
     }
 }
 
-/// Octave-up pitch shifter (two crossfaded grains) used for the reverb shimmer.
+/// Octave-up pitch shifter for the reverb shimmer. Two crossfaded grains read the input at double
+/// speed; each new grain starts from the point (within a 25 ms search) where the waveform best
+/// matches the grain already playing, so the two stay in phase and the octave comes out steady
+/// instead of warbling at the grain rate.
 struct OctaveUp {
     d: DelayLine,
-    grain: usize,
+    grain: f64,
+    search: usize,
+    span: usize,
     phase: f64,
+    /// cos/sin of 2*pi*phase, kept by rotation so the grain windows need no trig per sample
+    win: (f64, f64),
+    rot: (f64, f64),
+    off: [f64; 2],
 }
 
 impl OctaveUp {
-    fn new(fs: f64) -> Self {
-        let grain = (fs * 0.06) as usize;
-        OctaveUp { d: DelayLine::new(grain + 8), grain, phase: 0.0 }
+    fn new(fs: f64, grain_s: f64) -> Self {
+        let (grain, search) = (fs * grain_s, (fs * 0.025) as usize);
+        OctaveUp { d: DelayLine::new(grain as usize + search + 8), grain, search, span: (grain * 0.4).min(512.0) as usize, phase: 0.0, win: (1.0, 0.0), rot: ((2.0 * PI / grain).cos(), (2.0 * PI / grain).sin()), off: [0.0; 2] }
     }
+
     fn process(&mut self, x: f64) -> f64 {
         self.d.write(x);
-        let g = self.grain as f64;
-        self.phase += 1.0 / g;
+        let step = 1.0 / self.grain;
+        self.phase += step;
+        self.win = (self.win.0 * self.rot.0 - self.win.1 * self.rot.1, self.win.1 * self.rot.0 + self.win.0 * self.rot.1);
         if self.phase >= 1.0 {
             self.phase -= 1.0;
+            self.win = ((2.0 * PI * self.phase).cos(), (2.0 * PI * self.phase).sin());
         }
-        let mut p2 = self.phase + 0.5;
-        if p2 >= 1.0 {
-            p2 -= 1.0;
+        let mut y = 0.0;
+        for k in 0..2 {
+            let mut ph = self.phase + 0.5 * k as f64;
+            if ph >= 1.0 {
+                ph -= 1.0;
+            }
+            // the read point closes in by one sample per sample = double speed = one octave up
+            let base = (1.0 - ph) * self.grain + 2.0;
+            if ph < step {
+                // this grain is silent right now and the other one is at full level: restart in phase with it
+                self.off[k] = self.align(base, base - 0.5 * self.grain + self.off[1 - k]);
+            }
+            // Hann windows half a grain apart: they always add up to one
+            let w = if k == 0 { 0.5 - 0.5 * self.win.0 } else { 0.5 + 0.5 * self.win.0 };
+            y += self.d.read(base + self.off[k]) * w;
         }
-        let (w1, w2) = ((PI * self.phase).sin(), (PI * p2).sin());
-        self.d.read((1.0 - self.phase) * g + 2.0) * w1 * w1 + self.d.read((1.0 - p2) * g + 2.0) * w2 * w2
+        y
+    }
+
+    /// Extra delay for a grain starting at delay `base` that makes what it is about to play line up
+    /// with what the grain at delay `other` is about to play (best normalized correlation).
+    fn align(&self, base: f64, other: f64) -> f64 {
+        let (a0, b0) = (base as usize, other as usize);
+        let score = |off: usize| {
+            let (mut c, mut e) = (0.0, 1e-12);
+            let mut m = 0;
+            while m < self.span {
+                let a = self.d.tap(a0 + off - m);
+                c += a * self.d.tap(b0 - m);
+                e += a * a;
+                m += 4;
+            }
+            c / e.sqrt()
+        };
+        let (mut best, mut best_off) = (f64::MIN, 0);
+        for off in (0..=self.search).step_by(4) {
+            let sc = score(off);
+            if sc > best {
+                (best, best_off) = (sc, off);
+            }
+        }
+        for off in best_off.saturating_sub(3)..=(best_off + 3).min(self.search) {
+            let sc = score(off);
+            if sc > best {
+                (best, best_off) = (sc, off);
+            }
+        }
+        best_off as f64
     }
 }
 
-/// Lush stereo hall: input diffusion, 8-line modulated feedback delay network with
-/// Hadamard mixing and per-line damping, pre-delay and an octave-up shimmer loop.
+/// Schroeder allpass on a fixed whole-sample delay.
+#[inline]
+fn allpass(d: &mut DelayLine, len: usize, g: f64, x: f64) -> f64 {
+    let z = d.tap(len);
+    let w = x + g * z;
+    d.write(w);
+    z - g * w
+}
+
+const TANK: usize = 16;
+const LINE_MS: [f64; TANK] = [23.3, 27.1, 29.9, 33.7, 37.3, 41.9, 44.3, 48.1, 53.3, 57.7, 61.9, 67.1, 71.3, 77.9, 83.9, 89.3];
+const TANK_AP_MS: [f64; TANK] = [5.3, 3.7, 7.1, 4.3, 8.9, 6.1, 10.7, 4.9, 11.9, 7.7, 9.5, 5.9, 12.7, 8.3, 6.7, 10.1];
+const MOD_HZ: [f64; TANK] = [0.19, 0.27, 0.31, 0.37, 0.43, 0.49, 0.57, 0.63, 0.69, 0.77, 0.83, 0.91, 0.97, 1.03, 1.09, 1.21];
+/// Input diffusers: four for the left input, then four for the right (samples at 44.1 kHz).
+const DIFF_SAMPLES: [usize; 8] = [142, 107, 379, 277, 151, 113, 359, 293];
+/// Diffusers on the shimmer return: two left, two right.
+const SHIM_DIFF_MS: [f64; 4] = [13.7, 19.3, 15.1, 21.7];
+const TANK_AP_G: f64 = 0.5;
+const REVERB_OUT: f64 = 0.66;
+const SHIM_K: f64 = 0.8;
+const SHIM_LIMIT: f64 = 0.3;
+
+/// Lush stereo hall. Stereo in, per-channel pre-delay and input diffusion, then a 16-line
+/// feedback delay network (Hadamard mixing) with an allpass diffuser, high damping and a separate
+/// low-band decay in every line; line lengths wander with a sine plus a slow random drift.
+/// Shimmer: the tank output goes through a stereo octave-up shifter and back into the tank, so
+/// every trip around adds another, softer octave.
 pub struct Reverb {
     lines: Vec<DelayLine>,
-    pre: DelayLine,
+    aps: Vec<DelayLine>,
+    ap_len: [usize; TANK],
+    pre: Vec<DelayLine>,
     diff: Vec<DelayLine>,
-    diff_len: [usize; 4],
-    damp: [OnePole; 8],
-    wet_hp_l: OnePole,
-    wet_hp_r: OnePole,
-    shim_hp: OnePole,
-    v: [f64; 8],
-    ms: [f64; 8],
-    mc: [f64; 8],
-    rc: [f64; 8],
-    rs: [f64; 8],
-    gains: [f64; 8],
-    shim: OctaveUp,
+    diff_len: [usize; 8],
+    sdiff: Vec<DelayLine>,
+    sdiff_len: [usize; 4],
+    damp: [OnePole; TANK],
+    bass: [OnePole; TANK],
+    gains: [f64; TANK],
+    shelf: [f64; TANK],
+    v: [f64; TANK],
+    ms: [f64; TANK],
+    mc: [f64; TANK],
+    rc: [f64; TANK],
+    rs: [f64; TANK],
+    rnd_target: [f64; TANK],
+    rnd_mid: [f64; TANK],
+    rnd: [f64; TANK],
+    rnd_timer: [f64; TANK],
+    rng: Rng,
+    wet_hp: [OnePole; 2],
+    shim: Vec<OctaveUp>,
+    shim_hp: [OnePole; 2],
+    shim_lp: [OnePole; 2],
+    shim_fb: [f64; 2],
+    shim_env: f64,
     fs: f64,
     scale: f64,
     feed: f64,
-    shim_fb: f64,
-    shim_env: f64,
     quiet: usize,
 }
-
-const BASE_MS: [f64; 8] = [31.7, 37.9, 41.3, 47.9, 53.1, 59.9, 67.3, 73.7];
-const MOD_HZ: [f64; 8] = [0.31, 0.43, 0.57, 0.69, 0.83, 0.97, 1.09, 1.21];
-const DIFF_SAMPLES: [usize; 4] = [142, 107, 379, 277];
 
 impl Reverb {
     fn new() -> Self {
         Reverb {
             lines: Vec::new(),
-            pre: DelayLine::new(1),
+            aps: Vec::new(),
+            ap_len: [1; TANK],
+            pre: Vec::new(),
             diff: Vec::new(),
-            diff_len: [1; 4],
-            damp: [OnePole::default(); 8],
-            wet_hp_l: OnePole::default(),
-            wet_hp_r: OnePole::default(),
-            shim_hp: OnePole::default(),
-            v: [0.0; 8],
-            ms: [0.0; 8],
-            mc: [0.0; 8],
-            rc: [0.0; 8],
-            rs: [0.0; 8],
-            gains: [0.0; 8],
-            shim: OctaveUp::new(48000.0),
+            diff_len: [1; 8],
+            sdiff: Vec::new(),
+            sdiff_len: [1; 4],
+            damp: [OnePole::default(); TANK],
+            bass: [OnePole::default(); TANK],
+            gains: [0.0; TANK],
+            shelf: [0.0; TANK],
+            v: [0.0; TANK],
+            ms: [0.0; TANK],
+            mc: [0.0; TANK],
+            rc: [0.0; TANK],
+            rs: [0.0; TANK],
+            rnd_target: [0.0; TANK],
+            rnd_mid: [0.0; TANK],
+            rnd: [0.0; TANK],
+            rnd_timer: [0.0; TANK],
+            rng: Rng(0x5EED_CA7E_D2A1_0001),
+            wet_hp: [OnePole::default(); 2],
+            shim: Vec::new(),
+            shim_hp: [OnePole::default(); 2],
+            shim_lp: [OnePole::default(); 2],
+            shim_fb: [0.0; 2],
+            shim_env: 0.0,
             fs: 48000.0,
             scale: 1.0,
             feed: 0.0,
-            shim_fb: 0.0,
-            shim_env: 0.0,
             quiet: 0,
         }
     }
@@ -714,23 +811,44 @@ impl Reverb {
 impl StereoFx for Reverb {
     fn prepare(&mut self, fs: f64, enabled: bool, p: &[f32]) {
         self.fs = fs;
-        self.lines = (0..8).map(|i| DelayLine::new((BASE_MS[i] * 1.75 * fs / 1000.0 + fs * 0.004) as usize)).collect();
-        self.ms = [0.0; 8];
-        self.mc = [0.0; 8];
-        self.damp = [OnePole::default(); 8];
-        self.pre = DelayLine::new((fs * 0.21) as usize);
-        for i in 0..4 {
+        self.lines = (0..TANK).map(|i| DelayLine::new((LINE_MS[i] * 1.75 * fs / 1000.0 + fs * 0.004) as usize)).collect();
+        for i in 0..TANK {
+            self.ap_len[i] = (TANK_AP_MS[i] * fs / 1000.0) as usize;
+        }
+        self.aps = (0..TANK).map(|i| DelayLine::new(self.ap_len[i] + 4)).collect();
+        self.pre = (0..2).map(|_| DelayLine::new((fs * 0.21) as usize)).collect();
+        for i in 0..8 {
             self.diff_len[i] = (DIFF_SAMPLES[i] as f64 * fs / 44100.0) as usize;
         }
-        self.diff = (0..4).map(|i| DelayLine::new(self.diff_len[i] + 4)).collect();
-        self.wet_hp_l.set_low_pass(fs, 90.0);
-        self.wet_hp_r.set_low_pass(fs, 90.0);
-        self.shim_hp.set_low_pass(fs, 400.0);
-        self.shim = OctaveUp::new(fs);
+        self.diff = (0..8).map(|i| DelayLine::new(self.diff_len[i] + 4)).collect();
+        for i in 0..4 {
+            self.sdiff_len[i] = (SHIM_DIFF_MS[i] * fs / 1000.0) as usize;
+        }
+        self.sdiff = (0..4).map(|i| DelayLine::new(self.sdiff_len[i] + 4)).collect();
+        self.shim = vec![OctaveUp::new(fs, 0.089), OctaveUp::new(fs, 0.101)];
+        self.damp = [OnePole::default(); TANK];
+        self.bass = [OnePole::default(); TANK];
+        self.wet_hp = [OnePole::default(); 2];
+        self.shim_hp = [OnePole::default(); 2];
+        self.shim_lp = [OnePole::default(); 2];
+        for c in 0..2 {
+            self.wet_hp[c].set_low_pass(fs, 90.0);
+            self.shim_hp[c].set_low_pass(fs, 250.0);
+            self.shim_lp[c].set_low_pass(fs, 6000.0);
+        }
+        for f in self.bass.iter_mut() {
+            f.set_low_pass(fs, 250.0);
+        }
+        self.ms = [0.0; TANK];
+        self.mc = [0.0; TANK];
+        self.rnd_target = [0.0; TANK];
+        self.rnd_mid = [0.0; TANK];
+        self.rnd = [0.0; TANK];
+        self.rnd_timer = [0.0; TANK];
         self.scale = 0.45 + 1.2 * p[2] as f64;
         self.feed = if enabled { 1.0 } else { 0.0 };
         self.quiet = 0;
-        self.shim_fb = 0.0;
+        self.shim_fb = [0.0; 2];
         self.shim_env = 0.0;
     }
 
@@ -740,17 +858,24 @@ impl StereoFx for Reverb {
             return;
         }
         let t60 = reverb_decay_s(p[0]);
+        // lows ring a little longer than the mids in short rooms, shorter in huge ones (warm, never muddy)
+        let t60_low = t60 * (1.35 - 0.6 * p[0] as f64);
         let pre_d = (p[1] as f64 * 0.2 * fs).max(1.0);
         let target_scale = 0.45 + 1.2 * p[2] as f64;
         let (damp_hz, mod_d) = (log(p[3] as f64, 1500.0, 15000.0), p[4] as f64 * 0.0016 * fs);
         let (shim_amt, mix) = (p[5] as f64, p[6] as f64 * 1.2);
-        for i in 0..8 {
+        for i in 0..TANK {
             self.damp[i].set_low_pass(fs, damp_hz);
-            let len = BASE_MS[i] * self.scale * fs / 1000.0;
+            let len = LINE_MS[i] * self.scale * fs / 1000.0 + self.ap_len[i] as f64;
             self.gains[i] = 10f64.powf(-3.0 * len / (fs * t60));
+            self.shelf[i] = 10f64.powf(-3.0 * len / (fs * t60_low)) / self.gains[i] - 1.0;
         }
+        // the tank gets louder as the decay gets longer: scale the shimmer send to match, so the knob feels the same at any decay
+        let shim_gain = shim_amt * SHIM_K * (self.scale / t60).sqrt();
         let (feed_step, glide) = (1.0 / (fs * 0.02), 1.0 - (-1.0 / (fs * 0.25)).exp());
-        for i in 0..8 {
+        let rnd_slew = 1.0 - (-1.0 / (fs * 0.12)).exp();
+        let (env_atk, env_rel) = (1.0 - (-1.0 / (fs * 0.005)).exp(), 1.0 - (-1.0 / (fs * 0.3)).exp());
+        for i in 0..TANK {
             let nrm = (self.ms[i] * self.ms[i] + self.mc[i] * self.mc[i]).sqrt();
             if nrm > 0.0 {
                 self.ms[i] /= nrm;
@@ -768,35 +893,45 @@ impl StereoFx for Reverb {
             self.feed = ramp(self.feed, ft, feed_step);
             self.scale += glide * (target_scale - self.scale);
 
-            let mut x = 0.5 * (l[n] as f64 + r[n] as f64) * self.feed;
-            self.pre.write(x);
-            x = self.pre.read(pre_d) + self.shim_fb * shim_amt * 0.55;
-            for k in 0..4 {
-                // input diffusion (Schroeder allpasses)
-                let d = self.diff[k].read(self.diff_len[k] as f64);
-                let w = x + 0.62 * d;
-                x = d - 0.62 * w;
-                self.diff[k].write(w);
+            // pre-delay, shimmer return and input diffusion, per channel
+            let mut x = [l[n] as f64 * self.feed, r[n] as f64 * self.feed];
+            for c in 0..2 {
+                self.pre[c].write(x[c]);
+                x[c] = self.pre[c].read(pre_d) + self.shim_fb[c];
+                for k in 0..4 {
+                    x[c] = allpass(&mut self.diff[4 * c + k], self.diff_len[4 * c + k], 0.62, x[c]);
+                }
             }
 
             let len_scale = self.scale * fs / 1000.0;
-            for i in 0..8 {
+            let mut out = [0.0f64; 2];
+            for i in 0..TANK {
                 let t = self.ms[i] * self.rc[i] + self.mc[i] * self.rs[i];
                 self.mc[i] = self.mc[i] * self.rc[i] - self.ms[i] * self.rs[i];
                 self.ms[i] = t;
-                let d = BASE_MS[i] * len_scale + mod_d * (1.0 + self.ms[i]);
-                let rd = self.lines[i].read(d);
-                self.v[i] = self.damp[i].low_pass(rd) * self.gains[i];
-            }
-            let v = &mut self.v;
-            let out_l = v[0] - v[2] + v[4] - v[6] + 0.5 * (v[1] + v[5]);
-            let out_r = v[1] - v[3] + v[5] - v[7] + 0.5 * (v[2] + v[6]);
+                self.rnd_timer[i] -= 1.0;
+                if self.rnd_timer[i] <= 0.0 {
+                    self.rnd_target[i] = self.rng.next_f64() * 2.0 - 1.0;
+                    self.rnd_timer[i] = fs * (0.2 + 0.5 * self.rng.next_f64());
+                }
+                self.rnd_mid[i] += rnd_slew * (self.rnd_target[i] - self.rnd_mid[i]);
+                self.rnd[i] += rnd_slew * (self.rnd_mid[i] - self.rnd[i]);
 
-            // 8-point fast Walsh-Hadamard mix (energy preserving)
+                let d = LINE_MS[i] * len_scale + mod_d * (1.0 + 0.6 * self.ms[i] + 0.4 * self.rnd[i]);
+                let y = self.damp[i].low_pass(self.lines[i].read(d)) * self.gains[i];
+                let y = y + self.shelf[i] * self.bass[i].low_pass(y);
+                let y = allpass(&mut self.aps[i], self.ap_len[i], TANK_AP_G, y);
+                self.v[i] = y;
+                // even lines feed the left output, odd lines the right
+                out[i & 1] += if i & 2 == 0 { y } else { -y };
+            }
+
+            // 16-point fast Walsh-Hadamard mix (energy preserving)
+            let v = &mut self.v;
             let mut h = 1;
-            while h < 8 {
+            while h < TANK {
                 let mut i = 0;
-                while i < 8 {
+                while i < TANK {
                     for j in i..i + h {
                         let (a, b) = (v[j], v[j + h]);
                         v[j] = a + b;
@@ -806,27 +941,297 @@ impl StereoFx for Reverb {
                 }
                 h <<= 1;
             }
-            for i in 0..8 {
-                let inj = x * if i & 1 == 0 { 0.5 } else { -0.5 };
-                self.lines[i].write(v[i] * 0.353_553_39 + inj + 1e-20);
+            for i in 0..TANK {
+                let inj = x[i & 1] * if i & 4 == 0 { 0.35 } else { -0.35 };
+                self.lines[i].write(v[i] * 0.25 + inj + 1e-20);
             }
 
-            // shimmer loop with self-limiting so long decays can't build up without bound
-            let ao = out_l.abs() + out_r.abs();
-            self.shim_env += (if ao > self.shim_env { 0.001 } else { 0.00005 }) * (ao - self.shim_env);
-            self.shim_fb = if shim_amt > 0.0 {
-                let s = self.shim.process(0.5 * (out_l + out_r));
-                self.shim_hp.high_pass(s).tanh() / (1.0 + 10.0 * self.shim_env)
+            // shimmer: octave-up of each side, band-limited and diffused, returns to the opposite side
+            if shim_amt > 0.0 {
+                let mut s = [0.0f64; 2];
+                for c in 0..2 {
+                    let y = self.shim[c].process(out[c]);
+                    let y = self.shim_lp[c].low_pass(self.shim_hp[c].high_pass(y));
+                    let y = allpass(&mut self.sdiff[2 * c], self.sdiff_len[2 * c], 0.6, y);
+                    s[c] = shim_gain * allpass(&mut self.sdiff[2 * c + 1], self.sdiff_len[2 * c + 1], 0.6, y);
+                }
+                // transparent until the return gets loud, then it is held at a ceiling
+                let a = s[0].abs().max(s[1].abs());
+                self.shim_env += (if a > self.shim_env { env_atk } else { env_rel }) * (a - self.shim_env);
+                let g = SHIM_LIMIT / self.shim_env.max(SHIM_LIMIT);
+                self.shim_fb = [2.0 * (0.5 * g * s[1]).tanh(), 2.0 * (0.5 * g * s[0]).tanh()];
             } else {
-                0.0
-            };
+                self.shim_fb = [0.0; 2];
+            }
 
-            let (wl, wr) = (self.wet_hp_l.high_pass(out_l) * 0.6, self.wet_hp_r.high_pass(out_r) * 0.6);
+            let wl = self.wet_hp[0].high_pass(out[0]) * REVERB_OUT;
+            let wr = self.wet_hp[1].high_pass(out[1]) * REVERB_OUT;
             let dry = 1.0 - 0.25 * mix * self.feed;
             l[n] = (l[n] as f64 * dry + wl * mix) as f32;
             r[n] = (r[n] as f64 * dry + wr * mix) as f32;
             peak = peak.max(wl.abs() + wr.abs());
         }
         self.quiet = if peak < 1e-5 { self.quiet + l.len() } else { 0 };
+    }
+}
+
+#[cfg(test)]
+mod reverb_tests {
+    use super::*;
+
+    const FS: f64 = 48000.0;
+
+    /// Runs the reverb (knobs: DECAY, PREDELAY, SIZE, TONE, MOD, SHIMMER, MIX) on a mono input
+    /// padded to `secs` and returns only the wet signal.
+    fn wet(p: [f32; 7], input: &[f32], secs: f64) -> (Vec<f64>, Vec<f64>) {
+        let n = (secs * FS) as usize;
+        let mut dry = vec![0.0f32; n];
+        let m = input.len().min(n);
+        dry[..m].copy_from_slice(&input[..m]);
+        let (mut l, mut r) = (dry.clone(), dry.clone());
+        let mut fx = make_post("reverb");
+        fx.prepare(FS, true, &p);
+        for (a, b) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
+            fx.process(a, b, &p, true);
+        }
+        let mix = p[6] as f64 * 1.2;
+        let f = |o: &[f32]| o.iter().zip(&dry).map(|(&o, &d)| (o as f64 - d as f64 * (1.0 - 0.25 * mix)) / mix).collect::<Vec<f64>>();
+        (f(&l), f(&r))
+    }
+
+    fn noise(secs: f64, amp: f64) -> Vec<f32> {
+        let mut rng = Rng(0x1234_5678_9ABC_DEF1);
+        (0..(secs * FS) as usize).map(|_| (amp * (rng.next_f64() * 2.0 - 1.0)) as f32).collect()
+    }
+
+    fn tone(hz: f64, secs: f64, amp: f64) -> Vec<f32> {
+        let n = (secs * FS) as usize;
+        (0..n)
+            .map(|i| {
+                let fade = (i.min(n - 1 - i) as f64 / (0.01 * FS)).min(1.0);
+                (amp * fade * (2.0 * PI * hz * i as f64 / FS).sin()) as f32
+            })
+            .collect()
+    }
+
+    fn rms(x: &[f64]) -> f64 {
+        (x.iter().map(|v| v * v).sum::<f64>() / x.len().max(1) as f64).sqrt()
+    }
+
+    /// Decay time from the Schroeder integral (-5 to -35 dB, doubled), starting at sample `from`.
+    fn t60(l: &[f64], r: &[f64], from: usize) -> f64 {
+        let mut edc: Vec<f64> = (from..l.len()).map(|i| l[i] * l[i] + r[i] * r[i]).collect();
+        for i in (0..edc.len() - 1).rev() {
+            edc[i] += edc[i + 1];
+        }
+        let at = |db: f64| edc.iter().position(|&e| 10.0 * (e / edc[0]).log10() <= db).unwrap_or(edc.len()) as f64;
+        2.0 * (at(-35.0) - at(-5.0)) / FS
+    }
+
+    /// Hann-windowed amplitude of the `hz` component.
+    fn partial(x: &[f64], hz: f64) -> f64 {
+        let (mut re, mut im, mut ws) = (0.0, 0.0, 0.0);
+        for (i, &v) in x.iter().enumerate() {
+            let w = 0.5 - 0.5 * (2.0 * PI * i as f64 / x.len() as f64).cos();
+            let ph = 2.0 * PI * hz * i as f64 / FS;
+            re += w * v * ph.cos();
+            im += w * v * ph.sin();
+            ws += w;
+        }
+        2.0 * (re * re + im * im).sqrt() / ws
+    }
+
+    /// Level of the band around `hz` (40 ms windows) and how much it flutters (0 = perfectly steady).
+    fn band(x: &[f64], hz: f64) -> (f64, f64) {
+        let (hop, win) = (240, 1920);
+        let env: Vec<f64> = (0..(x.len() - win) / hop).map(|k| partial(&x[k * hop..k * hop + win], hz)).collect();
+        let mut acc = 0.0;
+        let mut cnt = 0.0;
+        for k in 30..env.len() - 30 {
+            let ma = env[k - 30..=k + 30].iter().sum::<f64>() / 61.0;
+            acc += (env[k] / ma - 1.0).powi(2);
+            cnt += 1.0;
+        }
+        (rms(&env), (acc / cnt).sqrt())
+    }
+
+    fn kurtosis(x: &[f64]) -> f64 {
+        let m2 = x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64;
+        let m4 = x.iter().map(|v| v.powi(4)).sum::<f64>() / x.len() as f64;
+        m4 / (m2 * m2)
+    }
+
+    fn corr(l: &[f64], r: &[f64]) -> f64 {
+        let lr: f64 = l.iter().zip(r).map(|(a, b)| a * b).sum();
+        lr / (l.iter().map(|v| v * v).sum::<f64>() * r.iter().map(|v| v * v).sum::<f64>()).sqrt()
+    }
+
+    /// The previous shimmer shifter (two free-running 60 ms grains), kept here for comparison.
+    fn old_shifter(x: &[f64]) -> Vec<f64> {
+        let g = FS * 0.06;
+        let mut d = DelayLine::new(g as usize + 8);
+        let mut phase = 0.0f64;
+        x.iter()
+            .map(|&v| {
+                d.write(v);
+                phase += 1.0 / g;
+                if phase >= 1.0 {
+                    phase -= 1.0;
+                }
+                let p2 = (phase + 0.5) % 1.0;
+                let (w1, w2) = ((PI * phase).sin(), (PI * p2).sin());
+                d.read((1.0 - phase) * g + 2.0) * w1 * w1 + d.read((1.0 - p2) * g + 2.0) * w2 * w2
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reverb_decay_follows_knob() {
+        for decay in [0.2f32, 0.45] {
+            let want = reverb_decay_s(decay);
+            let (l, r) = wet([decay, 0.0, 0.6, 0.5, 0.4, 0.0, 1.0], &noise(0.05, 0.5), 0.5 + want * 2.2);
+            let got = t60(&l, &r, (0.3 * FS) as usize);
+            assert!((got / want - 1.0).abs() < 0.15, "knob says {want:.2}s, tail measures {got:.2}s");
+        }
+    }
+
+    #[test]
+    fn reverb_is_wide_and_silent_without_input() {
+        let (l, r) = wet([0.45, 0.15, 0.6, 0.5, 0.4, 0.5, 1.0], &[], 1.0);
+        assert!(l.iter().chain(&r).all(|v| v.abs() < 1e-9));
+        let (l, r) = wet([0.45, 0.15, 0.6, 0.5, 0.4, 0.0, 1.0], &noise(0.05, 0.5), 3.0);
+        let from = (0.3 * FS) as usize;
+        assert!(corr(&l[from..], &r[from..]).abs() < 0.3);
+    }
+
+    #[test]
+    fn reverb_stays_bounded_when_maxed() {
+        let s = |t: f64| (t * FS) as usize;
+        let (l, r) = wet([1.0; 7], &noise(6.0, 1.0), 20.0);
+        assert!(l.iter().chain(&r).all(|v| v.is_finite() && v.abs() < 10.0));
+        assert!(rms(&l[s(18.0)..]) < rms(&l[s(6.0)..s(8.0)]));
+    }
+
+    #[test]
+    fn shimmer_octave_is_steady() {
+        // 345 Hz and 587 Hz made the old free-running shifter warble badly
+        for hz in [110.0, 345.0, 587.0] {
+            let mut sh = OctaveUp::new(FS, 0.089);
+            let y: Vec<f64> = tone(hz, 2.0, 0.3).iter().map(|&v| sh.process(v as f64)).collect();
+            let (level, flutter) = band(&y[(0.5 * FS) as usize..(1.8 * FS) as usize], 2.0 * hz);
+            assert!(level > 0.27 && flutter < 0.05, "{hz} Hz: level {level:.3}, flutter {flutter:.3}");
+        }
+    }
+
+    #[test]
+    fn shimmer_knob_adds_the_octave() {
+        let s = |t: f64| (t * FS) as usize;
+        let octave = |amount: f32| {
+            let (l, _) = wet([0.85, 0.0, 0.9, 0.5, 0.4, amount, 1.0], &tone(330.0, 1.0, 0.3), 5.0);
+            band(&l[s(1.5)..s(4.5)], 660.0).0 / band(&l[s(1.5)..s(4.5)], 330.0).0
+        };
+        assert!(octave(0.0) < 0.01);
+        assert!(octave(1.0) > 0.3);
+    }
+
+    #[test]
+    #[ignore]
+    fn reverb_speed() {
+        let input = noise(5.0, 0.3);
+        for (name, shimmer) in [("no shimmer", 0.0f32), ("shimmer", 0.5)] {
+            let best = (0..8)
+                .map(|_| {
+                    let t0 = std::time::Instant::now();
+                    let _ = wet([0.45, 0.15, 0.6, 0.5, 0.4, shimmer, 0.3], &input, 5.0);
+                    t0.elapsed().as_secs_f64()
+                })
+                .fold(f64::MAX, f64::min);
+            println!("{name}: {:.0} ns/sample = {:.1}% of one core at 48 kHz", best * 1e9 / (5.0 * FS), best / 5.0 * 100.0);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn reverb_report() {
+        let s = |t: f64| (t * FS) as usize;
+        let burst = noise(0.05, 0.5);
+        for (name, p) in [
+            ("default", [0.45, 0.15, 0.6, 0.5, 0.4, 0.0, 1.0f32]),
+            ("short  ", [0.2, 0.05, 0.5, 0.5, 0.2, 0.0, 1.0]),
+            ("long   ", [0.85, 0.3, 0.9, 0.5, 0.4, 0.0, 1.0]),
+            ("small  ", [0.45, 0.0, 0.0, 0.5, 0.4, 0.0, 1.0]),
+            ("dark   ", [0.45, 0.15, 0.6, 0.0, 0.4, 0.0, 1.0]),
+        ] {
+            let want = reverb_decay_s(p[0]);
+            let (l, r) = wet(p, &burst, 0.5 + want * 2.2);
+            println!(
+                "{name} knob {:5.2}s  t60 {:5.2}s  wet rms {:.5}  first 0.5s rms {:.5}  L/R corr {:+.3}",
+                want,
+                t60(&l, &r, s(0.3)),
+                rms(&l) * (l.len() as f64).sqrt() / 100.0,
+                rms(&l[..s(0.5)]),
+                corr(&l[s(0.3)..], &r[s(0.3)..])
+            );
+        }
+        // band decay times: lows vs mids vs highs at the default setting
+        for hz in [110.0, 440.0, 1760.0, 5000.0] {
+            let (l, r) = wet([0.45, 0.0, 0.6, 0.5, 0.4, 0.0, 1.0], &tone(hz, 0.3, 0.3), 7.0);
+            println!("tone {hz:6.0} Hz  t60 {:.2}s", t60(&l, &r, s(0.4)));
+        }
+        // echo density of the impulse response (3.0 = gaussian, i.e. perfectly smooth)
+        let mut click = vec![0.0f32; 8];
+        click[0] = 1.0;
+        let (l, _) = wet([0.45, 0.0, 0.6, 1.0, 0.0, 0.0, 1.0], &click, 1.5);
+        println!(
+            "kurtosis 20-60ms {:.2}  60-150ms {:.2}  150-400ms {:.2}  400-1000ms {:.2}",
+            kurtosis(&l[s(0.02)..s(0.06)]),
+            kurtosis(&l[s(0.06)..s(0.15)]),
+            kurtosis(&l[s(0.15)..s(0.4)]),
+            kurtosis(&l[s(0.4)..s(1.0)])
+        );
+        // shimmer: a 330 Hz note into a long hall
+        for sh in [0.0f32, 0.45, 1.0] {
+            let (l, r) = wet([0.85, 0.0, 0.9, 0.5, 0.4, sh, 1.0], &tone(330.0, 1.0, 0.3), 6.0);
+            let seg = &l[s(1.5)..s(4.5)];
+            let b: Vec<(f64, f64)> = [330.0, 660.0, 1320.0, 2640.0, 5280.0].iter().map(|&hz| band(seg, hz)).collect();
+            println!(
+                "shimmer {sh:.2}: 330 {:.4}  660 {:.4}  1320 {:.4}  2640 {:.4}  5280 {:.4} | ripple 330 {:.3}  660 {:.3}  1320 {:.3} | rms {:.4} corr {:+.3}",
+                b[0].0, b[1].0, b[2].0, b[3].0, b[4].0, b[0].1, b[1].1, b[2].1,
+                rms(seg),
+                corr(seg, &r[s(1.5)..s(4.5)])
+            );
+        }
+        // shimmer at other decay times: the octave should sit at a similar level relative to the note
+        for dec in [0.2f32, 0.45, 0.7] {
+            let (l, _) = wet([dec, 0.0, 0.6, 0.5, 0.4, 1.0, 1.0], &tone(330.0, 1.0, 0.3), 3.0);
+            let seg = &l[s(0.5)..s(1.5)];
+            println!("shimmer 1.00 at decay {dec:.2}: 330 {:.4}  660 {:.4}  1320 {:.4}", band(seg, 330.0).0, band(seg, 660.0).0, band(seg, 1320.0).0);
+        }
+        // the pitch shifter on its own: steady notes in, how steady is the octave coming out?
+        for hz in [110.0, 196.0, 330.0, 345.0, 440.0, 587.0, 1000.0] {
+            let note: Vec<f64> = tone(hz, 3.0, 0.3).iter().map(|&v| v as f64).collect();
+            let mut sh = OctaveUp::new(FS, 0.089);
+            let new: Vec<f64> = note.iter().map(|&v| sh.process(v)).collect();
+            let old = old_shifter(&note);
+            let (o, n) = (band(&old[s(0.5)..s(2.5)], 2.0 * hz), band(&new[s(0.5)..s(2.5)], 2.0 * hz));
+            println!("shifter {hz:5.0} Hz: old level {:.3} flutter {:.3} | new level {:.3} flutter {:.3}", o.0, o.1, n.0, n.1);
+        }
+        // a fifth (two notes at once)
+        let (a, b) = (tone(220.0, 3.0, 0.2), tone(330.0, 3.0, 0.2));
+        let chord: Vec<f64> = a.iter().zip(&b).map(|(&x, &y)| (x + y) as f64).collect();
+        let mut sh = OctaveUp::new(FS, 0.089);
+        let new: Vec<f64> = chord.iter().map(|&v| sh.process(v)).collect();
+        let old = old_shifter(&chord);
+        for hz in [440.0, 660.0] {
+            let (o, n) = (band(&old[s(0.5)..s(2.5)], hz), band(&new[s(0.5)..s(2.5)], hz));
+            println!("shifter fifth, {hz:.0} Hz: old level {:.3} flutter {:.3} | new level {:.3} flutter {:.3}", o.0, o.1, n.0, n.1);
+        }
+        // worst case: everything maxed, loud input
+        let p = [1.0f32; 7];
+        let t0 = std::time::Instant::now();
+        let (l, _) = wet(p, &noise(6.0, 1.0), 20.0);
+        let el = t0.elapsed().as_secs_f64();
+        let peak = l.iter().fold(0.0f64, |a, v| a.max(v.abs()));
+        println!("maxed: peak {peak:.2}  rms 6-8s {:.4}  rms 18-20s {:.4}  ({:.0}x realtime)", rms(&l[s(6.0)..s(8.0)]), rms(&l[s(18.0)..s(20.0)]), 20.0 / el);
     }
 }
