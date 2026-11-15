@@ -253,36 +253,215 @@ mod compressor_tests {
     }
 }
 
-/// Green screamer: mid-hump soft clipping overdrive.
+// Green screamer clipping stage: an op-amp with the diodes, a small cap and the DRIVE pot in its
+// feedback loop, and a resistor + cap leg to ground that sets where the gain starts (720 Hz).
+const OD_LEG_R: f64 = 4.7e3;
+const OD_LEG_C: f64 = 47e-9;
+const OD_FB_C: f64 = 51e-12;
+/// Diode saturation current and slope voltage (1N914).
+const OD_IS: f64 = 2.52e-9;
+const OD_NVT: f64 = 1.752 * 25.85e-3;
+/// The diode facing the other way is a softer one: it starts conducting earlier and gives way
+/// more gradually, so the two halves of the wave are rounded differently and some second
+/// harmonic stays in the sound.
+const OD_IS_B: f64 = 12.0 * OD_IS;
+const OD_NVT_B: f64 = 1.5 * OD_NVT;
+// Tone stage: 1k + 0.22 uF low-pass (723 Hz), then an op-amp whose 20k pot steers a 220 ohm +
+// 0.22 uF leg between cutting at its input and boosting in its feedback (1k).
+const OD_TONE_R: f64 = 1e3;
+const OD_TONE_C: f64 = 0.22e-6;
+const OD_TONE_POT: f64 = 20e3;
+const OD_TONE_RS: f64 = 220.0;
+
+/// What the op-amp can swing: clean up to the knee, then rounding into the supply rail. Only a
+/// hot boost in front of the pedal gets this far.
+#[inline]
+fn od_rail(u: f64) -> f64 {
+    const KNEE: f64 = 3.0;
+    const SPAN: f64 = 0.8;
+    let a = u.abs();
+    if a <= KNEE { u } else { (KNEE + SPAN * ((a - KNEE) / SPAN).tanh()).copysign(u) }
+}
+
+/// Green screamer: mid-hump soft clipping overdrive, modelled on the circuit. The clipping stage
+/// is an op-amp with the diodes and the DRIVE pot in its feedback loop, solved every sample for
+/// the voltage that carries the input current, with the clean signal riding on top: quiet
+/// playing passes almost clean and the knee rounds over gradually as you dig in. The small cap
+/// across the loop closes the top end down as DRIVE comes up. The solved curve is anti-aliased
+/// the same way as `SoftClip` (averaged over the step from the previous sample). TONE is the
+/// pedal's own active control, from the bare 723 Hz low-pass up to its full upper-mid lift.
 #[derive(Default)]
 pub struct Overdrive {
-    hp: OnePole,
-    clip_lp: OnePole,
-    tone: OnePole,
+    inp: OnePole,
+    leg: OnePole,
+    cap: OnePole,
+    out: OnePole,
+    tone: Biquad,
     fs: f64,
-    g: f64,
+    /// DRIVE resistance as a conductance.
+    gr: f64,
+    /// Last sample's feedback current, the voltage across the diodes that carries it, and the
+    /// integral of that voltage over current up to there.
+    i1: f64,
+    v1: f64,
+    f1: f64,
     lvl: f64,
 }
 
 impl SampleFx for Overdrive {
     fn init(&mut self, fs: f64) {
         self.fs = fs;
-        self.hp.set_low_pass(fs, 720.0);
-        self.clip_lp.set_low_pass(fs, 7500.0);
-        self.hp.reset();
-        self.clip_lp.reset();
+        self.inp.set_low_pass(fs, 20.0);
+        self.leg.set_low_pass(fs, 1.0 / (2.0 * PI * OD_LEG_R * OD_LEG_C));
+        self.out.set_low_pass(fs, 16.0);
+        self.inp.reset();
+        self.leg.reset();
+        self.cap.reset();
+        self.out.reset();
         self.tone.reset();
+        (self.i1, self.v1, self.f1) = (0.0, 0.0, 0.0);
     }
     fn update(&mut self, p: &[f32]) {
-        self.g = (51e3 + p[0] as f64 * 500e3) / 4.7e3;
-        self.tone.set_low_pass(self.fs, log(p[1] as f64, 650.0, 7000.0));
-        self.lvl = db(-18.0 + 26.0 * p[2] as f64);
+        let d = p[0] as f64;
+        self.gr = 1.0 / (51e3 + d * 500e3);
+        self.cap.set_low_pass(self.fs, self.gr / (2.0 * PI * OD_FB_C));
+        // TONE: the leg's series resistance (pot halves in parallel + 220 ohm) sweeps from the
+        // pot's centre, where the leg does nothing, to the full-boost end
+        let r = log((p[1] as f64).powf(0.75), OD_TONE_RS + OD_TONE_POT / 4.0, OD_TONE_RS);
+        let k = 0.5 + 0.5 * (1.0 - 4.0 * (r - OD_TONE_RS) / OD_TONE_POT).max(0.0).sqrt();
+        let (rc, c) = (OD_TONE_R * OD_TONE_C, OD_TONE_C);
+        self.tone.analog(self.fs, [1.0, c * (r + k * OD_TONE_R), 0.0], [1.0, rc + c * r + OD_TONE_R * (1.0 - k) * c, rc * c * r]);
+        self.lvl = db(-16.0 + 26.0 * p[2] as f64);
     }
     fn tick(&mut self, x: f64) -> f64 {
-        let hp = self.hp.high_pass(x);
-        let mut c = self.clip_lp.low_pass(hp * self.g);
-        c = if c > 0.0 { 0.62 * (c / 0.62).tanh() } else { 0.55 * (c / 0.55).tanh() }; // mismatched diodes
-        self.tone.low_pass(x + c) * self.lvl
+        let x = self.inp.high_pass(x);
+        // current pulled through the leg to ground; all of it has to come round the feedback loop
+        let i = self.cap.low_pass(self.leg.high_pass(x) / OD_LEG_R).clamp(-0.02, 0.02);
+        // Newton for the voltage at which DRIVE resistor + diodes carry that current
+        let mut v = self.v1;
+        let (mut ep, mut en) = (0.0, 0.0);
+        for _ in 0..24 {
+            (ep, en) = (OD_IS * (v / OD_NVT).exp(), OD_IS_B * (-v / OD_NVT_B).exp());
+            let f = self.gr * v + (ep - OD_IS) - (en - OD_IS_B) - i;
+            let dv = (f / (self.gr + ep / OD_NVT + en / OD_NVT_B)).clamp(-0.1, 0.1);
+            v -= dv;
+            if dv.abs() < 1e-10 {
+                break;
+            }
+        }
+        // integral of v over i, in closed form from the solution: v i - (integral of i over v)
+        let f = v * i - (0.5 * self.gr * v * v + OD_NVT * (ep - OD_IS) - OD_IS * v + OD_NVT_B * (en - OD_IS_B) + OD_IS_B * v);
+        let di = i - self.i1;
+        let vd = if di.abs() < 1e-10 { 0.5 * (v + self.v1) } else { (f - self.f1) / di };
+        (self.i1, self.v1, self.f1) = (i, v, f);
+        let y = self.out.high_pass(od_rail(x + vd));
+        self.tone.process(y) * self.lvl
+    }
+}
+
+#[cfg(test)]
+mod overdrive_tests {
+    use super::*;
+
+    const FS: f64 = 192000.0;
+    const N: usize = 19200; // 10 Hz bins
+
+    fn make(drive: f32, tone: f32) -> Overdrive {
+        let mut o = Overdrive::default();
+        o.init(FS);
+        o.update(&[drive, tone, 0.6, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        o
+    }
+
+    fn render(fx: &mut dyn SampleFx, hz: f64, amp: f64) -> Vec<f64> {
+        let w = 2.0 * PI * hz / FS;
+        (0..FS as usize / 2 + N).map(|i| fx.tick(amp * (w * i as f64).sin())).skip(FS as usize / 2).collect()
+    }
+
+    fn bin(x: &[f64], hz: usize) -> f64 {
+        let w = 2.0 * PI * hz as f64 / FS;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, v) in x.iter().enumerate() {
+            re += v * (w * i as f64).cos();
+            im += v * (w * i as f64).sin();
+        }
+        (re * re + im * im) / (x.len() as f64 * x.len() as f64) * 4.0
+    }
+
+    fn rms(x: &[f64]) -> f64 {
+        (x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64).sqrt()
+    }
+
+    fn dbr(a: f64, b: f64) -> f64 {
+        10.0 * (a / b).max(1e-30).log10()
+    }
+
+    /// Aliasing (what lands below 20 kHz without being a harmonic) stays far under the harmonics.
+    #[test]
+    fn clean_at_every_drive() {
+        for drive in [0.0f32, 0.35, 0.7, 1.0] {
+            let x = render(&mut make(drive, 1.0), 1240.0, 0.3);
+            let (mut harm, mut other) = (0.0, 0.0);
+            for hz in (20..20000).step_by(10) {
+                let pw = bin(&x, hz);
+                if hz % 1240 == 0 { harm += pw } else { other += pw }
+            }
+            let alias = dbr(other, harm);
+            println!("DRIVE {drive:.2}  alias {alias:6.1} dB");
+            assert!(alias < -80.0, "aliasing at DRIVE {drive}: {alias:.1} dB");
+        }
+    }
+
+    /// Second harmonic stays in the sound however hard the pedal is driven, and turning DRIVE
+    /// up from the default adds grit, not volume.
+    #[test]
+    fn warm_and_level_at_every_drive() {
+        for amp in [0.15, 0.4] {
+            let mut levels = vec![];
+            for drive in [0.35f32, 0.7, 1.0] {
+                let x = render(&mut make(drive, 0.5), 440.0, amp);
+                let h2 = dbr(bin(&x, 880), bin(&x, 440));
+                println!("amp {amp:.2} DRIVE {drive:.2}  rms {:.3}  H2 {h2:6.1} dB", rms(&x));
+                assert!(h2 > -45.0, "no second harmonic at DRIVE {drive}: {h2:.1} dB");
+                levels.push(rms(&x));
+            }
+            let spread = 20.0 * (levels[2] / levels[0]).log10();
+            assert!(spread.abs() < 1.0, "level moves {spread:.1} dB with DRIVE");
+        }
+    }
+
+    /// Soft playing comes through nearly clean; digging in brings the grit.
+    #[test]
+    fn cleans_up_when_played_softly() {
+        let h3 = |amp: f64| {
+            let x = render(&mut make(0.0, 0.5), 440.0, amp);
+            dbr(bin(&x, 1320), bin(&x, 440))
+        };
+        let (soft, hard) = (h3(0.03), h3(0.4));
+        println!("third harmonic: soft {soft:.1} dB, hard {hard:.1} dB");
+        assert!(soft < -35.0 && hard > -25.0, "soft {soft:.1} dB, hard {hard:.1} dB");
+    }
+
+    /// TONE leaves the lows alone and lifts the upper mids steadily across its travel.
+    #[test]
+    fn tone_lifts_the_upper_mids() {
+        let gain = |tone: f32, hz: f64| {
+            let mut o = make(0.0, tone);
+            o.gr = 1.0; // feedback shorted: the clipping stage is a clean unity buffer
+            20.0 * (rms(&render(&mut o, hz, 0.001)) / o.lvl / 0.001 * 2f64.sqrt()).log10()
+        };
+        let at3k: Vec<f64> = [0.0f32, 0.25, 0.5, 0.75, 1.0].iter().map(|t| gain(*t, 3000.0)).collect();
+        println!("3 kHz across TONE: {at3k:.1?} dB; 100 Hz: {:.1} / {:.1} dB", gain(0.0, 100.0), gain(1.0, 100.0));
+        assert!(at3k.windows(2).all(|w| w[1] > w[0] + 1.5), "{at3k:?}");
+        assert!(at3k[4] - at3k[0] > 9.0);
+        assert!((gain(0.0, 100.0) - gain(1.0, 100.0)).abs() < 1.0);
+    }
+
+    #[test]
+    fn silence_stays_silent() {
+        let mut o = make(1.0, 1.0);
+        let peak = (0..20000).map(|_| o.tick(0.0).abs()).fold(0.0, f64::max);
+        assert!(peak < 1e-9, "{peak} from silence");
     }
 }
 

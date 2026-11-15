@@ -50,6 +50,14 @@ impl Biquad {
         self.a2 = na2 / na0;
     }
 
+    /// Bilinear transform of the analog section (b0 + b1 s + b2 s^2) / (a0 + a1 s + a2 s^2).
+    pub fn analog(&mut self, fs: f64, b: [f64; 3], a: [f64; 3]) {
+        let k = 2.0 * fs;
+        let z = |c: [f64; 3]| (c[0] + c[1] * k + c[2] * k * k, 2.0 * (c[0] - c[2] * k * k), c[0] - c[1] * k + c[2] * k * k);
+        let ((b0, b1, b2), (a0, a1, a2)) = (z(b), z(a));
+        self.set(b0, b1, b2, a0, a1, a2);
+    }
+
     pub fn low_pass(&mut self, fs: f64, f: f64, q: f64) {
         let w = 2.0 * PI * f / fs;
         let (c, al) = (w.cos(), w.sin() / (2.0 * q));
