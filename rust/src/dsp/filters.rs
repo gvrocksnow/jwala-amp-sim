@@ -42,6 +42,15 @@ impl Biquad {
         10.0 * ((nr * nr + ni * ni) / (dr * dr + di * di).max(1e-30)).max(1e-30).log10()
     }
 
+    /// Power gain at a frequency given as `[cos w, sin w, cos 2w, sin 2w]` (for designing IRs fast).
+    #[inline]
+    pub fn power_at(&self, z: [f64; 4]) -> f64 {
+        let [c1, s1, c2, s2] = z;
+        let (nr, ni) = (self.b0 + self.b1 * c1 + self.b2 * c2, -(self.b1 * s1 + self.b2 * s2));
+        let (dr, di) = (1.0 + self.a1 * c1 + self.a2 * c2, -(self.a1 * s1 + self.a2 * s2));
+        (nr * nr + ni * ni) / (dr * dr + di * di).max(1e-30)
+    }
+
     fn set(&mut self, nb0: f64, nb1: f64, nb2: f64, na0: f64, na1: f64, na2: f64) {
         self.b0 = nb0 / na0;
         self.b1 = nb1 / na0;

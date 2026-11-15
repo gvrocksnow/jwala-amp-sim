@@ -9,6 +9,31 @@ use super::pedals::{make_post, make_pre, StereoFx, Stomp};
 use super::state::RigState;
 use crate::spec::{self, Slot};
 
+/// Early reflections off the room (delay in seconds, gain), slightly different per side.
+const ROOM_L: [(f64, f64); 5] = [(0.0029, 0.55), (0.0047, -0.42), (0.0073, 0.33), (0.0109, -0.24), (0.0157, 0.17)];
+const ROOM_R: [(f64, f64); 5] = [(0.0034, 0.52), (0.0055, -0.40), (0.0082, 0.31), (0.0121, -0.22), (0.0171, 0.15)];
+
+/// Schroeder allpass: smears the room's reflections so they don't ring.
+struct Allpass {
+    buf: Vec<f64>,
+    i: usize,
+    g: f64,
+}
+
+impl Allpass {
+    fn new(len: f64, g: f64) -> Self {
+        Allpass { buf: vec![0.0; (len as usize).max(1)], i: 0, g }
+    }
+    #[inline]
+    fn process(&mut self, x: f64) -> f64 {
+        let d = self.buf[self.i];
+        let w = x + self.g * d;
+        self.buf[self.i] = w;
+        self.i = (self.i + 1) % self.buf.len();
+        d - self.g * w
+    }
+}
+
 fn db(db: f64) -> f64 {
     10f64.powf(db / 20.0)
 }
@@ -45,12 +70,14 @@ pub struct Rig {
     post: Vec<Box<dyn StereoFx>>,
     eq: GraphicEq,
     cab: Convolver,
-    mic_shelf: Biquad,
-    mic_lp: Biquad,
-    proximity: Biquad,
-    low_cut: Biquad,
-    high_cut: Biquad,
+    mic_shelf: [Biquad; 2],
+    mic_lp: [Biquad; 2],
+    proximity: [Biquad; 2],
+    low_cut: [Biquad; 2],
+    high_cut: [Biquad; 2],
     room: DelayLine,
+    room_lp: [OnePole; 2],
+    room_ap: [[Allpass; 2]; 2],
     last_mic: [f32; 4],
     in_hp: OnePole,
     out_dc_l: OnePole,
@@ -101,12 +128,17 @@ impl Rig {
             post,
             eq: GraphicEq::new(fs, &st.eq),
             cab: Convolver::default(),
-            mic_shelf: Biquad::default(),
-            mic_lp: Biquad::default(),
-            proximity: Biquad::default(),
-            low_cut: Biquad::default(),
-            high_cut: Biquad::default(),
+            mic_shelf: [Biquad::default(); 2],
+            mic_lp: [Biquad::default(); 2],
+            proximity: [Biquad::default(); 2],
+            low_cut: [Biquad::default(); 2],
+            high_cut: [Biquad::default(); 2],
             room: DelayLine::new((fs * 0.02) as usize),
+            room_lp: [OnePole::default(); 2],
+            room_ap: [
+                [Allpass::new(fs * 0.0013, 0.5), Allpass::new(fs * 0.0023, 0.5)],
+                [Allpass::new(fs * 0.0017, 0.5), Allpass::new(fs * 0.0029, 0.5)],
+            ],
             last_mic: [-1.0; 4],
             in_hp: OnePole::default(),
             out_dc_l: OnePole::default(),
@@ -124,6 +156,9 @@ impl Rig {
         rig.in_hp.set_low_pass(fs, 25.0);
         rig.out_dc_l.set_low_pass(fs, 10.0);
         rig.out_dc_r.set_low_pass(fs, 10.0);
+        for lp in rig.room_lp.iter_mut() {
+            lp.set_low_pass(fs, 5500.0); // the walls soak up the top
+        }
         rig
     }
 
@@ -135,23 +170,34 @@ impl Rig {
     fn update_mic(&mut self, st: &RigState) {
         let c = &st.cab;
         let fs = self.sample_rate;
+        // both channels share coefficients; each keeps its own state
+        fn set(f: &mut [Biquad; 2], design: impl FnOnce(&mut Biquad)) {
+            design(&mut f[0]);
+            let [a, b] = f;
+            b.copy_coefs(a);
+        }
+        self.cab.set_mic(c.mic_pos);
         if c.mic_pos != self.last_mic[0] {
             self.last_mic[0] = c.mic_pos;
+            // only for user IRs and the acoustic channel: the built-in cabs are designed per position
             let p = c.mic_pos as f64;
-            self.mic_shelf.high_shelf(fs, 2500.0, 2.5 - 10.0 * p); // cap = bright, cone = dark
-            self.mic_lp.low_pass(fs, 16000.0 - 9000.0 * p, 0.7);
+            set(&mut self.mic_shelf, |b| b.high_shelf(fs, 2500.0, 2.5 - 10.0 * p)); // cap = bright, cone = dark
+            set(&mut self.mic_lp, |b| b.low_pass(fs, 16000.0 - 9000.0 * p, 0.7));
         }
         if c.distance != self.last_mic[1] {
             self.last_mic[1] = c.distance;
-            self.proximity.low_shelf(fs, 180.0, 3.5 - 8.0 * c.distance as f64); // proximity effect fades with distance
+            let d = c.distance as f64;
+            set(&mut self.proximity, |b| b.low_shelf(fs, 180.0, 3.5 - 8.0 * d)); // proximity effect fades with distance
         }
         if c.low_cut != self.last_mic[2] {
             self.last_mic[2] = c.low_cut;
-            self.low_cut.high_pass(fs, 20.0 * 15f64.powf(c.low_cut as f64), 0.707);
+            let v = c.low_cut as f64;
+            set(&mut self.low_cut, |b| b.high_pass(fs, 20.0 * 15f64.powf(v), 0.707));
         }
         if c.high_cut != self.last_mic[3] {
             self.last_mic[3] = c.high_cut;
-            self.high_cut.low_pass(fs, (0.45 * fs).min(3000.0 * (20000.0f64 / 3000.0).powf(c.high_cut as f64)), 0.707);
+            let v = c.high_cut as f64;
+            set(&mut self.high_cut, |b| b.low_pass(fs, (0.45 * fs).min(3000.0 * (20000.0f64 / 3000.0).powf(v)), 0.707));
         }
     }
 
@@ -212,24 +258,40 @@ impl Rig {
         }
         self.amp.process(buf, &st.amp, &mut self.os, &self.os_on);
 
+        // an acoustic guitar isn't played through a speaker: keep only the mic and room
+        let acoustic = st.amp.channel == 3;
+        if st.cab.enabled && !acoustic {
+            self.cab.process(buf, l, r);
+        } else {
+            l.copy_from_slice(buf);
+            r.copy_from_slice(buf);
+        }
         if st.cab.enabled {
-            // an acoustic guitar isn't played through a speaker: keep only the mic and room
-            if st.amp.channel != 3 {
-                self.cab.process(buf);
-            }
             let fs = self.sample_rate;
+            let mic_eq = acoustic || !self.cab.positional();
             let room_mix = st.cab.distance as f64 * 0.3;
-            for v in buf.iter_mut() {
-                let mut x = *v as f64;
-                self.room.write(x);
-                x += room_mix * (self.room.read(fs * 0.0031) * 0.6 - self.room.read(fs * 0.0057) * 0.45 + self.room.read(fs * 0.0089) * 0.3);
-                x = self.mic_lp.process(self.mic_shelf.process(self.proximity.process(x)));
-                *v = self.high_cut.process(self.low_cut.process(x)) as f32;
+            for i in 0..n {
+                let (xl, xr) = (l[i] as f64, r[i] as f64);
+                self.room.write(0.5 * (xl + xr));
+                let er = |taps: &[(f64, f64)]| taps.iter().map(|&(t, g)| g * self.room.read(fs * t)).sum::<f64>();
+                let (el, erl) = (er(&ROOM_L), er(&ROOM_R));
+                for (c, (x, e)) in [(xl, el), (xr, erl)].into_iter().enumerate() {
+                    let [a0, a1] = &mut self.room_ap[c];
+                    let e = a1.process(a0.process(self.room_lp[c].low_pass(e)));
+                    let mut y = self.proximity[c].process(x + room_mix * e);
+                    if mic_eq {
+                        y = self.mic_lp[c].process(self.mic_shelf[c].process(y));
+                    }
+                    let y = self.high_cut[c].process(self.low_cut[c].process(y)) as f32;
+                    if c == 0 {
+                        l[i] = y;
+                    } else {
+                        r[i] = y;
+                    }
+                }
             }
         }
 
-        l.copy_from_slice(buf);
-        r.copy_from_slice(buf);
         if st.amp.channel == 3 {
             // the acoustic channel is a stereo pair of mics; its side skips the cab's mic and room
             for ((l, r), s) in l.iter_mut().zip(r.iter_mut()).zip(self.amp.acoustic_side(n)) {
