@@ -1273,69 +1273,333 @@ mod doubler_tests {
     }
 }
 
-/// Lush stereo tri-chorus.
+/// Resting delay of each chorus voice in ms (even = left, odd = right). Staggered, so the voices
+/// never comb at the same frequencies and the two sides differ even with the knobs at rest.
+const CH_BASE_MS: [f64; 6] = [6.3, 7.1, 8.1, 9.2, 10.3, 11.4];
+/// Widest sweep of the main LFO either side of rest, ms.
+const CH_SWING_MS: f64 = 3.0;
+/// Peak detune (pitch ratio) of the main LFO at DEPTH 10: about 21 cents. Above ~0.6 Hz the sweep
+/// narrows as RATE rises to hold this, so fast settings shimmer instead of going seasick.
+const CH_DETUNE: f64 = 0.012;
+/// The second, fast LFO of a tri-chorus: a shallow shimmer riding on the slow sweep.
+const CH_FAST_HZ: f64 = 5.6;
+const CH_FAST_DETUNE: f64 = 0.004;
+/// Per-voice slow wander (incommensurate rates), so the pattern never audibly repeats.
+const CH_DRIFT_HZ: [f64; 6] = [0.110, 0.093, 0.137, 0.127, 0.163, 0.151];
+const CH_DRIFT_MS: f64 = 0.35;
+/// The wet path is band-limited like a bucket-brigade line: lows stay dry, tight and centred,
+/// and the top is rolled off so the voices sit behind the dry signal instead of fizzing.
+const CH_LOW_HZ: f64 = 140.0;
+const CH_HIGH_HZ: f64 = 8000.0;
+/// How far the dry signal drops at MIX 100%, and the level of each voice.
+const CH_DRY_DUCK: f64 = 0.3;
+const CH_VOICE: f64 = 0.5;
+/// The LFOs are evaluated every CH_CTRL samples; the delays glide linearly in between.
+const CH_CTRL: usize = 16;
+
+/// Sweep of the slow and of the fast LFO in seconds, either side of rest.
+fn chorus_swing(rate: f64, depth: f64) -> (f64, f64) {
+    let slow = depth * (CH_SWING_MS * 1e-3).min(CH_DETUNE / (2.0 * PI * rate));
+    // the shimmer bows out as RATE itself gets fast
+    let fast = depth * CH_FAST_DETUNE / (2.0 * PI * CH_FAST_HZ) / (1.0 + (rate / 2.5).powi(2));
+    (slow, fast)
+}
+
+/// Lush stereo tri-chorus: three voices a side, each swept by a slow LFO (RATE), a fast shallow
+/// one and its own wander. The three LFO phases sit 120 degrees apart, so the pitch wobble of the
+/// voices cancels in the sum (thick, not seasick), and the right side sweeps opposite to the left.
 pub struct Chorus {
     dl: DelayLine,
     dr: DelayLine,
+    hp: [OnePole; 2],
+    lp: [Biquad; 2],
     fs: f64,
     phase: f64,
+    fast_phase: f64,
+    drift_phase: [f64; 6],
+    /// current delay of each voice in samples, and its per-sample glide
+    d: [f64; 6],
+    d_step: [f64; 6],
+    ctr: usize,
+    /// smoothed sweep widths (slow LFO, fast LFO, wander) in seconds
+    swing: [f64; 3],
     fade: f64,
     fade_step: f64,
-    voice_sin: [f64; 6],
-    voice_cos: [f64; 6],
 }
 
 impl Chorus {
     fn new() -> Self {
-        let mut voice_sin = [0.0; 6];
-        let mut voice_cos = [0.0; 6];
-        for v in 0..6 {
-            voice_sin[v] = (v as f64 * PI / 3.0).sin();
-            voice_cos[v] = (v as f64 * PI / 3.0).cos();
+        Chorus {
+            dl: DelayLine::new(1),
+            dr: DelayLine::new(1),
+            hp: [OnePole::default(); 2],
+            lp: [Biquad::default(); 2],
+            fs: 48000.0,
+            phase: 0.0,
+            fast_phase: 0.0,
+            // spread out, so the voices do not all start at rest together
+            drift_phase: [0.0, 1.1, 2.3, 3.2, 4.4, 5.5],
+            d: [0.0; 6],
+            d_step: [0.0; 6],
+            ctr: 0,
+            swing: [0.0; 3],
+            fade: 0.0,
+            fade_step: 0.0,
         }
-        Chorus { dl: DelayLine::new(1), dr: DelayLine::new(1), fs: 48000.0, phase: 0.0, fade: 0.0, fade_step: 0.0, voice_sin, voice_cos }
+    }
+
+    fn swings(rate: f64, depth: f64) -> [f64; 3] {
+        let (slow, fast) = chorus_swing(rate, depth);
+        [slow, fast, depth * CH_DRIFT_MS * 1e-3]
+    }
+
+    /// Where voice `v` should be right now, in samples.
+    fn target(&self, v: usize) -> f64 {
+        let third = PI / 3.0;
+        // left voices at 0/120/240 degrees, right ones in between (= the left sweep inverted);
+        // the fast LFO visits the voices in the opposite order
+        let lfo = self.swing[0] * (self.phase + v as f64 * third).sin()
+            + self.swing[1] * (self.fast_phase + ((v * 5) % 6) as f64 * third).sin()
+            + self.swing[2] * self.drift_phase[v].sin();
+        (CH_BASE_MS[v] * 1e-3 + lfo) * self.fs
+    }
+
+    /// Advances the LFOs by one control period and aims every voice at its next position.
+    fn retarget(&mut self, rate: f64, depth: f64) {
+        let dt = CH_CTRL as f64 / self.fs;
+        // the sweep widths glide to a new knob setting: a jump would be heard as a pitch zip
+        let k = coef(self.fs / CH_CTRL as f64, 0.15);
+        let to = Self::swings(rate, depth);
+        for n in 0..3 {
+            self.swing[n] += k * (to[n] - self.swing[n]);
+        }
+        self.phase = (self.phase + 2.0 * PI * rate * dt) % (2.0 * PI);
+        self.fast_phase = (self.fast_phase + 2.0 * PI * CH_FAST_HZ * dt) % (2.0 * PI);
+        for v in 0..6 {
+            self.drift_phase[v] = (self.drift_phase[v] + 2.0 * PI * CH_DRIFT_HZ[v] * dt) % (2.0 * PI);
+            self.d_step[v] = (self.target(v) - self.d[v]) / CH_CTRL as f64;
+        }
     }
 }
 
 impl StereoFx for Chorus {
-    fn prepare(&mut self, fs: f64, enabled: bool, _p: &[f32]) {
+    fn prepare(&mut self, fs: f64, enabled: bool, p: &[f32]) {
         self.fs = fs;
         self.dl = DelayLine::new((fs * 0.03) as usize);
         self.dr = DelayLine::new((fs * 0.03) as usize);
+        for c in 0..2 {
+            self.hp[c] = OnePole::default();
+            self.hp[c].set_low_pass(fs, CH_LOW_HZ);
+            self.lp[c] = Biquad::default();
+            self.lp[c].low_pass(fs, CH_HIGH_HZ.min(0.45 * fs), 0.6);
+        }
         self.fade_step = 1.0 / (fs * 0.015);
         self.fade = if enabled { 1.0 } else { 0.0 };
-        self.phase = 0.0;
+        (self.phase, self.fast_phase, self.ctr) = (0.0, 0.0, 0);
+        self.swing = Self::swings(log(p[0] as f64, 0.08, 6.0), p[1] as f64);
+        for v in 0..6 {
+            self.d[v] = self.target(v);
+            self.d_step[v] = 0.0;
+        }
     }
 
     fn process(&mut self, l: &mut [f32], r: &mut [f32], p: &[f32], enabled: bool) {
         if !enabled && self.fade == 0.0 {
             return;
         }
-        let fs = self.fs;
-        let (rate, depth, mix) = (log(p[0] as f64, 0.08, 6.0), p[1] as f64 * 0.0045 * fs, p[2] as f64);
-        let (base_d, inc) = (0.0075 * fs, 2.0 * PI * rate / fs);
+        if self.fade == 0.0 {
+            // switched on: nothing was recorded while bypassed, so start from silence
+            self.dl.clear();
+            self.dr.clear();
+            for c in 0..2 {
+                self.hp[c].reset();
+                self.lp[c].reset();
+            }
+        }
+        let (rate, depth, mix) = (log(p[0] as f64, 0.08, 6.0), p[1] as f64, p[2] as f64);
         let t = if enabled { 1.0 } else { 0.0 };
         for i in 0..l.len() {
             self.fade = ramp(self.fade, t, self.fade_step);
-            self.phase += inc;
-            if self.phase > 2.0 * PI {
-                self.phase -= 2.0 * PI;
+            if self.ctr == 0 {
+                self.retarget(rate, depth);
             }
-            self.dl.write(l[i] as f64);
-            self.dr.write(r[i] as f64);
-            let (sn, cs) = (self.phase.sin(), self.phase.cos());
+            self.ctr = (self.ctr + 1) % CH_CTRL;
+
+            let (xl, xr) = (l[i] as f64, r[i] as f64);
+            self.dl.write(self.lp[0].process(self.hp[0].high_pass(xl)));
+            self.dr.write(self.lp[1].process(self.hp[1].high_pass(xr)));
             let (mut wl, mut wr) = (0.0, 0.0);
             for v in 0..6 {
-                let lfo = sn * self.voice_cos[v] + cs * self.voice_sin[v]; // sin(phase + v*60°)
-                let d = base_d + depth * (0.5 + 0.5 * lfo);
-                if v & 1 == 0 { wl += self.dl.read(d) } else { wr += self.dr.read(d) }
+                self.d[v] += self.d_step[v];
+                if v & 1 == 0 { wl += self.dl.read(self.d[v]) } else { wr += self.dr.read(self.d[v]) }
             }
-            wl /= 3.0;
-            wr /= 3.0;
             let m = mix * self.fade;
-            l[i] = (l[i] as f64 * (1.0 - 0.45 * m) + wl * 0.9 * m) as f32;
-            r[i] = (r[i] as f64 * (1.0 - 0.45 * m) + wr * 0.9 * m) as f32;
+            l[i] = (xl * (1.0 - CH_DRY_DUCK * m) + wl * CH_VOICE * m) as f32;
+            r[i] = (xr * (1.0 - CH_DRY_DUCK * m) + wr * CH_VOICE * m) as f32;
         }
+    }
+}
+
+#[cfg(test)]
+mod chorus_tests {
+    use super::*;
+
+    const FS: f64 = 48000.0;
+
+    fn run(p: [f32; 3], seconds: f64, input: impl Fn(usize) -> f32) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let mut c = Chorus::new();
+        c.prepare(FS, true, &p);
+        let n = (FS * seconds) as usize;
+        let dry: Vec<f32> = (0..n).map(&input).collect();
+        let (mut l, mut r) = (dry.clone(), dry.clone());
+        for (a, b) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
+            c.process(a, b, &p, true);
+        }
+        (dry, l, r)
+    }
+
+    fn rms(x: &[f32]) -> f64 {
+        (x.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / x.len() as f64).sqrt()
+    }
+
+    fn sine(hz: f64) -> impl Fn(usize) -> f32 {
+        move |i| (0.3 * (2.0 * PI * hz * i as f64 / FS).sin()) as f32
+    }
+
+    /// A new plucked note (a few decaying harmonics) every 230 ms, walking over a scale.
+    fn plucks(i: usize) -> f32 {
+        let period = (0.23 * FS) as usize;
+        let (note, k) = (i / period, (i % period) as f64 / FS);
+        let f = 110.0 * 2f64.powf([0.0, 3.0, 5.0, 7.0, 10.0, 12.0, 15.0][note % 7] / 12.0);
+        let mut y = 0.0;
+        for h in 1..=6 {
+            y += (2.0 * PI * f * h as f64 * k).sin() / h as f64 * (-k * (3.0 + 2.0 * h as f64)).exp();
+        }
+        (0.3 * y) as f32
+    }
+
+    /// The wet part of one output channel.
+    fn wet(out: &[f32], dry: &[f32], mix: f32) -> Vec<f32> {
+        out.iter().zip(dry).map(|(o, d)| o - d * (1.0 - CH_DRY_DUCK as f32 * mix)).collect()
+    }
+
+    /// Switching the pedal on does not change the loudness, at any MIX; the sides are balanced
+    /// and the mono sum keeps its body.
+    #[test]
+    fn level_balance_and_mono() {
+        for mix in [0.25, 0.5, 1.0] {
+            let (dry, l, r) = run([0.3, 0.5, mix], 10.0, plucks);
+            assert!(l.iter().chain(&r).all(|v| v.is_finite()));
+            let (d, a, b) = (rms(&dry), rms(&l), rms(&r));
+            let mono: Vec<f32> = l.iter().zip(&r).map(|(x, y)| 0.5 * (x + y)).collect();
+            println!("mix {mix}: dry {d:.4} l {a:.4} r {b:.4} mono {:.4}", rms(&mono));
+            assert!((20.0 * (a / d).log10()).abs() < 1.5 && (20.0 * (b / d).log10()).abs() < 1.5, "mix {mix}: level {d} -> {a} / {b}");
+            assert!((20.0 * (a / b).log10()).abs() < 0.8, "unbalanced: {a} vs {b}");
+            assert!(rms(&mono) > 0.75 * d, "mono sum is hollow: {} of {d}", rms(&mono));
+        }
+    }
+
+    /// The detune stays musical over the whole RATE range.
+    #[test]
+    fn detune_is_bounded_at_any_rate() {
+        for k in 0..=20 {
+            let rate = log(k as f64 / 20.0, 0.08, 6.0);
+            let (slow, fast) = chorus_swing(rate, 1.0);
+            let cents = 1731.0 * 2.0 * PI * (rate * slow + CH_FAST_HZ * fast);
+            println!("{rate:.2} Hz: sweep {:.2} ms, {cents:.1} cents", slow * 1e3);
+            assert!(cents < 30.0, "{cents} cents at {rate} Hz");
+            assert!(slow <= CH_SWING_MS * 1e-3 + 1e-12);
+        }
+        // and it is a real chorus at the default setting
+        let rate = log(0.3, 0.08, 6.0);
+        let (slow, fast) = chorus_swing(rate, 0.5);
+        assert!(1731.0 * 2.0 * PI * (rate * slow + CH_FAST_HZ * fast) > 5.0);
+    }
+
+    /// Voices never leave the delay line or reach the write point, even flat out.
+    #[test]
+    fn delays_stay_in_range() {
+        let p = [1.0, 1.0, 1.0];
+        let mut c = Chorus::new();
+        c.prepare(FS, true, &p);
+        let (mut l, mut r) = (vec![0.0f32; 64], vec![0.0f32; 64]);
+        let (mut lo, mut hi) = (f64::MAX, 0.0f64);
+        for _ in 0..(20.0 * FS) as usize / 64 {
+            c.process(&mut l, &mut r, &p, true);
+            for d in c.d {
+                (lo, hi) = (lo.min(d), hi.max(d));
+            }
+        }
+        println!("delays {:.2} .. {:.2} ms", lo * 1000.0 / FS, hi * 1000.0 / FS);
+        assert!(lo > 0.002 * FS && hi < c.dl.capacity() as f64 - 4.0);
+    }
+
+    /// Lows and the extreme top pass dry: only the band in between is chorused.
+    #[test]
+    fn wet_is_band_limited() {
+        let level = |hz: f64| {
+            let (dry, l, _) = run([0.3, 0.5, 1.0], 3.0, sine(hz));
+            rms(&wet(&l[48000..], &dry[48000..], 1.0)) / rms(&dry[48000..])
+        };
+        let (low, mid, high) = (level(50.0), level(1000.0), level(15000.0));
+        println!("wet/dry at 50 Hz {low:.3}, 1 kHz {mid:.3}, 15 kHz {high:.3}");
+        assert!(low < 0.6 * mid && high < 0.4 * mid, "{low} / {mid} / {high}");
+    }
+
+    /// The two sides carry different movement. A pure tone (the worst case: a one-voice chorus
+    /// nulls it completely) never drops out, as the three voices do not line up against the dry.
+    #[test]
+    fn wide_and_never_hollow() {
+        let corr = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (*x * *y) as f64).sum::<f64>() / (rms(a) * rms(b) * a.len() as f64);
+        let (dry, l, r) = run([0.3, 0.5, 1.0], 12.0, plucks);
+        let c = corr(&wet(&l, &dry, 1.0), &wet(&r, &dry, 1.0));
+        println!("wet L/R correlation {c:.3}");
+        assert!(c.abs() < 0.6, "sides correlate: {c}");
+
+        let mut worst = 1.0f64;
+        for hz in [220.0, 500.0, 1000.0, 2500.0] {
+            let (_, l, r) = run([0.3, 0.5, 0.5], 14.0, sine(hz));
+            let mono: Vec<f32> = l.iter().zip(&r).map(|(x, y)| 0.5 * (x + y)).collect();
+            for (name, x) in [("left", &l), ("mono", &mono)] {
+                let levels: Vec<f64> = x[4800..].chunks_exact(960).map(rms).collect();
+                let (lo, hi) = levels.iter().fold((f64::MAX, 0.0f64), |(a, b), v| (a.min(*v), b.max(*v)));
+                println!("{hz} Hz {name}: level {:.1} .. {:.1} dB", 20.0 * (lo / 0.2121).log10(), 20.0 * (hi / 0.2121).log10());
+                worst = worst.min(lo / hi);
+            }
+        }
+        assert!(worst > 0.1, "a held note drops out: {worst}");
+    }
+
+    /// Turning a knob while playing glides, it does not click.
+    #[test]
+    fn knob_moves_are_smooth() {
+        let mut c = Chorus::new();
+        c.prepare(FS, true, &[0.3, 0.0, 1.0]);
+        let (mut worst, mut prev) = (0.0f32, 0.0f32);
+        for b in 0..200 {
+            let p = if (b / 20) % 2 == 0 { [0.3, 0.0, 1.0] } else { [0.9, 1.0, 1.0] };
+            let mut l: Vec<f32> = (0..256).map(|i| sine(220.0)(b * 256 + i)).collect();
+            let mut r = l.clone();
+            c.process(&mut l, &mut r, &p, true);
+            for v in l {
+                worst = worst.max((v - prev).abs());
+                prev = v;
+            }
+        }
+        // a clean 220 Hz tone at this level moves under 0.01 per sample
+        println!("largest step {worst}");
+        assert!(worst < 0.03, "step of {worst}");
+    }
+
+    #[test]
+    fn bypassed_is_untouched() {
+        let p = [0.3, 0.5, 0.5];
+        let mut c = Chorus::new();
+        c.prepare(FS, false, &p);
+        let dry: Vec<f32> = (0..4800).map(plucks).collect();
+        let (mut l, mut r) = (dry.clone(), dry.clone());
+        c.process(&mut l, &mut r, &p, false);
+        assert!(l == dry && r == dry);
     }
 }
 

@@ -18,6 +18,11 @@ impl DelayLine {
         self.buf.len() - 4
     }
 
+    /// Empties the line (no allocation).
+    pub fn clear(&mut self) {
+        self.buf.fill(0.0);
+    }
+
     #[inline]
     pub fn write(&mut self, x: f64) {
         self.w = (self.w + 1) & self.mask;
