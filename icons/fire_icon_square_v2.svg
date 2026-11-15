@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#000"/>
+  <!-- inset frame -->
+  <rect x="28" y="28" width="456" height="456" rx="44" fill="none" stroke="#fff" stroke-width="6"/>
+
+  <!-- outer flame: three tongues, with an inner flame cut out -->
+  <path fill="#fff" fill-rule="evenodd" d="
+    M256 452
+    C172 452 116 394 116 318
+    C116 258 136 206 146 150
+    C176 190 196 222 206 258
+    C200 180 226 112 282 46
+    C276 112 300 150 324 186
+    C342 164 366 144 378 112
+    C408 186 400 252 400 318
+    C400 394 340 452 256 452 Z
+    M256 420
+    C206 420 170 386 170 338
+    C170 298 192 270 212 246
+    C218 276 230 296 248 306
+    C244 262 262 226 292 200
+    C298 236 318 256 334 282
+    C344 300 346 318 346 338
+    C346 386 306 420 256 420 Z"/>
+
+  <!-- core flame -->
+  <path fill="#fff" d="
+    M256 398
+    C226 398 206 378 206 352
+    C206 336 216 326 230 318
+    C234 332 244 340 258 344
+    C256 316 268 292 288 274
+    C294 302 306 320 306 352
+    C306 378 286 398 256 398 Z"/>
+
+  <!-- sparks -->
+  <path fill="#fff" d="M196 104 L204 120 L196 136 L188 120 Z"/>
+  <path fill="#fff" d="M352 56 L358 68 L352 80 L346 68 Z"/>
+  <path fill="#fff" d="M412 80 L420 96 L412 112 L404 96 Z"/>
+  <circle cx="110" cy="122" r="5" fill="#fff"/>
+</svg>
