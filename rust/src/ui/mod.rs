@@ -249,7 +249,12 @@ impl App {
             RawWindowHandle::Win32(h) => h.hwnd as isize,
             _ => 0,
         };
-        let phys = ((size.0 as f32 * scale) as u32, (size.1 as f32 * scale) as u32);
+        // before the (slow) GPU setup: the taskbar reads the icon once, when it first sees the window,
+        // and doesn't refresh its button for a later WM_SETICON
+        if shared.standalone.load(Ordering::Relaxed) {
+            set_window_icon(hwnd);
+        }
+        let phys =((size.0 as f32 * scale) as u32, (size.1 as f32 * scale) as u32);
         let target = gpu::target(window.raw_window_handle(), window.raw_display_handle());
         let renderer = match target.and_then(|t| gpu::Renderer::new(t, phys, scale)) {
             Ok(r) => Some(r),
@@ -543,7 +548,6 @@ impl App {
         if !self.shared.standalone.load(Ordering::Relaxed) {
             return;
         }
-        set_window_icon(self.hwnd);
         let saved = load_ui_state();
         if !saved.ir_path.is_empty() && self.shared.user_ir.lock().unwrap().is_none() && self.shared.load_user_ir(&saved.ir_path).is_ok() {
             self.params.persisted.write().unwrap().ir_path = saved.ir_path.clone();
@@ -1313,7 +1317,45 @@ fn set_window_icon(hwnd: isize) {
                 SendMessageW(top, WM_SETICON, which, icon);
             }
         }
+        refresh_taskbar_button(top);
     }
+}
+
+/// The taskbar takes a window's icon when it first sees the window (before we set ours, so it shows the
+/// generic one) and ignores a later WM_SETICON; removing and re-adding the button (ITaskbarList) makes
+/// it read the icon again, without hiding the window.
+#[cfg(windows)]
+unsafe fn refresh_taskbar_button(top: isize) {
+    use std::ffi::c_void;
+    #[repr(C)]
+    struct Guid(u32, u16, u16, [u8; 8]);
+    #[link(name = "ole32")]
+    extern "system" {
+        fn CoInitializeEx(reserved: *mut c_void, model: u32) -> i32;
+        fn CoCreateInstance(clsid: *const Guid, outer: *mut c_void, ctx: u32, iid: *const Guid, out: *mut *mut c_void) -> i32;
+    }
+    const TAIL: [u8; 8] = [0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90];
+    const CLSID_TASKBAR_LIST: Guid = Guid(0x56FD_F344, 0xFD6D, 0x11D0, TAIL);
+    const IID_ITASKBAR_LIST: Guid = Guid(0x56FD_F342, 0xFD6D, 0x11D0, TAIL);
+    const COINIT_APARTMENTTHREADED: u32 = 2;
+    const CLSCTX_INPROC_SERVER: u32 = 1;
+    // fails harmlessly (RPC_E_CHANGED_MODE) if this thread already joined another apartment
+    CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED);
+    let mut list: *mut c_void = std::ptr::null_mut();
+    if CoCreateInstance(&CLSID_TASKBAR_LIST, std::ptr::null_mut(), CLSCTX_INPROC_SERVER, &IID_ITASKBAR_LIST, &mut list) < 0 || list.is_null() {
+        return;
+    }
+    // vtable: QueryInterface, AddRef, Release, HrInit, AddTab, DeleteTab, ...
+    let vtbl = *(list as *const *const usize);
+    let release: unsafe extern "system" fn(*mut c_void) -> u32 = std::mem::transmute(*vtbl.add(2));
+    let hr_init: unsafe extern "system" fn(*mut c_void) -> i32 = std::mem::transmute(*vtbl.add(3));
+    let add_tab: unsafe extern "system" fn(*mut c_void, isize) -> i32 = std::mem::transmute(*vtbl.add(4));
+    let delete_tab: unsafe extern "system" fn(*mut c_void, isize) -> i32 = std::mem::transmute(*vtbl.add(5));
+    if hr_init(list) >= 0 {
+        delete_tab(list, top);
+        add_tab(list, top);
+    }
+    release(list);
 }
 
 #[cfg(not(windows))]
