@@ -44,7 +44,6 @@ struct VOut {
 // compiler drops every other branch. GPUs barely notice; software rendering (WARP) otherwise pays
 // for all branches on every pixel.
 override KIND: f32 = 0.0;
-const LOD_SHARPEN: f32 = 0.6;
 
 const K_RRECT: f32 = 0.0;
 const K_IMAGE: f32 = 1.0;
@@ -106,13 +105,25 @@ fn rect_mask(v: VOut) -> f32 {
     return cover(sd_rrect(v.local - half, half, min(v.p.y, min(half.x, half.y))));
 }
 
+// Scaled-down images: plain trilinear is too soft next to GDI+'s HighQualityBicubic (the C# look),
+// and a negative LOD bias alone aliases. So average a 2x2 grid of taps across the pixel's footprint,
+// each from the mip one level finer: as sharp as the bias, but the pixel is still fully covered.
+fn sample_img(smp: sampler, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
+    let ts = vec2<f32>(textureDimensions(img));
+    if max(length(dx * ts), length(dy * ts)) <= 1.0 { return textureSampleGrad(img, smp, uv, dx, dy); }
+    let hx = dx * 0.5;
+    let hy = dy * 0.5;
+    let ox = dx * 0.25;
+    let oy = dy * 0.25;
+    return 0.25 * (textureSampleGrad(img, smp, uv - ox - oy, hx, hy) + textureSampleGrad(img, smp, uv + ox - oy, hx, hy)
+        + textureSampleGrad(img, smp, uv - ox + oy, hx, hy) + textureSampleGrad(img, smp, uv + ox + oy, hx, hy));
+}
+
 @fragment
 fn fs_quad(v: VOut) -> @location(0) vec4<f32> {
     // derivatives in uniform control flow, so the branches below can sample with mipmaps
-    // scaled down = a mip LOD bias of about -0.7: plain trilinear picks a level too blurry next to
-    // GDI+'s HighQualityBicubic (the C# look); the Lanczos mip chain keeps that from aliasing
-    let dx = dpdx(v.uv) * LOD_SHARPEN;
-    let dy = dpdy(v.uv) * LOD_SHARPEN;
+    let dx = dpdx(v.uv);
+    let dy = dpdy(v.uv);
     if v.world.x < v.clip.x || v.world.y < v.clip.y || v.world.x > v.clip.z || v.world.y > v.clip.w { discard; }
     let kind = KIND;
     var col = v.color;
@@ -128,10 +139,10 @@ fn fs_quad(v: VOut) -> @location(0) vec4<f32> {
             col = mix(v.color, v.color2, t);
         }
     } else if kind == K_IMAGE {
-        let s = textureSampleGrad(img, clamp_smp, v.uv, dx, dy);   // premultiplied
+        let s = sample_img(clamp_smp, v.uv, dx, dy);   // premultiplied
         return s * v.color * rect_mask(v);
     } else if kind == K_TILE {
-        let s = textureSampleGrad(img, repeat_smp, v.uv, dx, dy);
+        let s = sample_img(repeat_smp, v.uv, dx, dy);
         return s * v.color * rect_mask(v);
     } else if kind == K_GLYPH {
         a = textureSampleLevel(glyphs, clamp_smp, v.uv, 0.0).r;
