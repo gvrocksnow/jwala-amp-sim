@@ -5,9 +5,16 @@ All notable changes to Jwala are recorded here, newest first.
 ## [0.3.0] - 2026-11-15
 
 ### Added
-- **LEAD II channel, phase 4:** two new factory presets, *Lead II Rhythm* and *Lead II Solo* (14 factory presets in total).
+- **LEAD II channel, phase 4:** two new factory presets, *Lead II Rhythm* and *Lead II Solo*.
+- New factory presets: *Aggro Lush* (LEAD II with shimmer reverb and EQ) and *Acoustic Lake* (acoustic channel with shimmer reverb and EQ).
 - **TAPE ECHO:** new **DIFFUSE** knob, which blooms the repeats into a wash. Wide pedals can now have up to 8 knobs, laid out 4 per row.
+- **SAVE dialog:** the preset name field now has a movable caret. Left/Right, Home/End and Delete work, and you can type or backspace anywhere in the name (Rust).
 - Before/after comparison renders in `samples/reverb_compare/` and `samples/cab_compare/`.
+
+### Changed: UI and presets
+- **UI is now grayscale:** the knob, header, dialogs, cab, EQ and tuner pages use a neutral gray theme instead of the gold accents (Rust and C#).
+- **Factory presets reworked** (Rust and C#). *Modern Metal* and *Soaring Solo* are gone; the 14 factory presets are now Init, Glass Clean, Ambient Shimmer, Classic Crunch, Blues Lead, Lead II Rhythm, Lead II Solo, Aggro Lush, Fuzz Wall, Rodent Grunge, Acoustic 1–3 and Acoustic Lake. *Init* now sets a clean neutral starting point, *Ambient Shimmer* is retuned on the clean channel, and *Glass Clean* adds shimmer.
+- **New app icon** (fire icon, `assets/app.ico`, sources in `icons/`). The C# version now uses the same shared icon file, and the old `legacy-csharp/src/app.ico` is deleted.
 
 ### Changed: high-quality DSP pass (Rust)
 - **CATHEDRAL reverb / shimmer:** rebuilt as a lush stereo hall. It has per-channel pre-delay and input diffusion, and a 16-line Hadamard FDN with allpass diffusers, high damping and a separate low-band decay per line. Line lengths wander slowly. Shimmer is now a phase-aligned octave-up grain shifter fed back into the tank, so it holds a steady octave without warble, and the send scales with decay.
@@ -27,7 +34,8 @@ All notable changes to Jwala are recorded here, newest first.
 - Synced the C# version with the Rust version: LEAD II channel, power amp, the high-quality pedals (split into `PedalsPre.cs` / `PedalsPost.cs`), EQ and cab convolver. Renders from the two versions match to float rounding.
 
 ### Fixed
-- Blurry graphics in the Rust UI. Downscaled assets now use a Lanczos mip chain with a negative LOD bias, which matches the C# version's GDI+ HighQualityBicubic look.
+- Blurry graphics in the Rust UI. Downscaled assets now use a Lanczos mip chain, sampled as a 2×2 supersample from the next-finer mip, which matches the C# version's GDI+ HighQualityBicubic look without aliasing.
+- The taskbar showed the generic icon for the standalone app. The icon is now set before GPU setup and the taskbar button is refreshed, so the taskbar picks it up (Rust).
 
 ### Version
 - Bumped to 0.3.0 in `rust/Cargo.toml` and `legacy-csharp/src/Jwala.csproj`.
