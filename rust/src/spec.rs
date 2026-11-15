@@ -193,6 +193,7 @@ pub const POST: [EffectSpec; 5] = [
             p("MOD", 0.3, ten),
             p("SPREAD", 0.6, pct),
             p("DUCK", 0.0, ten),
+            p("DIFFUSE", 0.4, ten),
         ],
     },
     EffectSpec {
@@ -210,4 +211,4 @@ pub const POST: [EffectSpec; 5] = [
 ];
 
 /// Most knobs any effect has.
-pub const MAX_FX_PARAMS: usize = 7;
+pub const MAX_FX_PARAMS: usize = 8;

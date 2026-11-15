@@ -336,7 +336,7 @@ fn knob_size(b: Rect) -> f32 {
     unit(b) * 0.24
 }
 
-/// Knobs in two rows: small pedals 2 per row (odd one centred), wide pedals 4 + 3.
+/// Knobs in two rows: small pedals 2 per row (odd one centred), wide pedals 4 per row.
 fn knob_center(sp: &EffectSpec, b: Rect, k: usize) -> (f32, f32) {
     let n = sp.params.len();
     let per_row = if sp.wide { 4 } else { 2 };

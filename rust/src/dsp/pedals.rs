@@ -2,7 +2,7 @@
 //! Knob values arrive as normalised 0..1 slices in the order of `spec::PRE` / `spec::POST`.
 
 use super::delay_line::DelayLine;
-use super::filters::OnePole;
+use super::filters::{Biquad, OnePole};
 use crate::spec::{delay_time_ms, doubler_delay_ms, log, reverb_decay_s};
 use std::f64::consts::PI;
 
@@ -488,20 +488,131 @@ impl StereoFx for Phaser {
     }
 }
 
-/// Stereo tape/analog style delay: gliding time changes, wow & flutter, filtered and saturated
-/// repeats, ping-pong spread and ducking. Repeats ring out when switched off.
+/// Diffusion allpass lengths in ms, left then right: mutually prime-ish and different on each side,
+/// so the smear also decorrelates the two channels.
+const ECHO_AP_MS: [[f64; 4]; 2] = [[2.3, 3.7, 6.1, 9.7], [2.9, 4.3, 5.3, 9.1]];
+const TAPE_DRIVE: f64 = 1.15;
+/// Bias into the tape curve: a little asymmetry, so the repeats pick up even harmonics too.
+const TAPE_BIAS: f64 = 0.15;
+/// High-frequency pre-emphasis around the tape curve (gain above ~2.5 kHz is 1 + this).
+const TAPE_EMPH: f64 = 1.6;
+
+/// Slow random wander of the tape speed, one per channel.
+struct Drift {
+    cur: f64,
+    mid: f64,
+    target: f64,
+    timer: f64,
+    rng: Rng,
+}
+
+impl Drift {
+    fn new(seed: u64) -> Self {
+        Drift { cur: 0.0, mid: 0.0, target: 0.0, timer: 0.0, rng: Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1) }
+    }
+    #[inline]
+    fn step(&mut self, fs: f64, slew: f64) -> f64 {
+        self.timer -= 1.0;
+        if self.timer <= 0.0 {
+            self.target = self.rng.next_f64() * 2.0 - 1.0;
+            self.timer = fs * (0.4 + 0.8 * self.rng.next_f64());
+        }
+        // two cascaded smoothers: the speed (= pitch) glides, it never steps
+        self.mid += slew * (self.target - self.mid);
+        self.cur += slew * (self.mid - self.cur);
+        self.cur
+    }
+}
+
+/// One channel of the echo's playback path. Everything read off the delay line goes through it
+/// before it is heard or fed back, so the first repeat is already "tape" and each further pass
+/// gets darker, softer and more diffuse: tone filters, low cut with a small head bump, an
+/// asymmetric tape curve inside a pre/de-emphasis pair (loud highs compress first) and four
+/// allpass diffusers.
+struct TapeHead {
+    lp: OnePole,
+    lp2: OnePole,
+    hp: OnePole,
+    bump: Biquad,
+    emph_a: f64,
+    pre_z: f64,
+    de_z: f64,
+    sat_off: f64,
+    sat_norm: f64,
+    aps: Vec<DelayLine>,
+    ap_len: [usize; 4],
+    /// Total allpass delay in samples; the main line is shortened by it so TIME stays true.
+    ap_sum: f64,
+    drift: Drift,
+}
+
+impl TapeHead {
+    fn new(seed: u64) -> Self {
+        let off = TAPE_BIAS.tanh();
+        TapeHead {
+            lp: OnePole::default(),
+            lp2: OnePole::default(),
+            hp: OnePole::default(),
+            bump: Biquad::default(),
+            emph_a: 0.0,
+            pre_z: 0.0,
+            de_z: 0.0,
+            sat_off: off,
+            sat_norm: 1.0 / (TAPE_DRIVE * (1.0 - off * off)),
+            aps: Vec::new(),
+            ap_len: [1; 4],
+            ap_sum: 4.0,
+            drift: Drift::new(seed),
+        }
+    }
+
+    fn prepare(&mut self, fs: f64, side: usize) {
+        self.hp.set_low_pass(fs, 95.0);
+        // with the 95 Hz low cut the net stays below unity everywhere, so the loop cannot run away
+        self.bump.peak(fs, 105.0, 0.8, 1.5);
+        self.emph_a = 1.0 - (-2.0 * PI * 2500.0 / fs).exp();
+        for (len, ms) in self.ap_len.iter_mut().zip(ECHO_AP_MS[side]) {
+            *len = ((ms * fs / 1000.0) as usize).max(1);
+        }
+        self.aps = self.ap_len.iter().map(|&n| DelayLine::new(n + 4)).collect();
+        self.ap_sum = self.ap_len.iter().sum::<usize>() as f64;
+    }
+
+    fn set_tone(&mut self, fs: f64, tone: f64) {
+        self.lp.set_low_pass(fs, tone);
+        self.lp2.set_low_pass(fs, tone * 1.5);
+    }
+
+    #[inline]
+    fn tick(&mut self, x: f64, g: f64) -> f64 {
+        let x = self.lp2.low_pass(self.lp.low_pass(x));
+        let x = self.bump.process(self.hp.high_pass(x));
+        // pre-emphasis, tape curve, exactly inverse de-emphasis: transparent when quiet
+        let k = TAPE_EMPH * (1.0 - self.emph_a);
+        let e = x * (1.0 + k) - k * self.pre_z;
+        self.pre_z += self.emph_a * (x - self.pre_z);
+        let s = ((TAPE_DRIVE * e + TAPE_BIAS).tanh() - self.sat_off) * self.sat_norm;
+        let mut y = (s + k * self.de_z) / (1.0 + k);
+        self.de_z += self.emph_a * (y - self.de_z);
+        for (d, &len) in self.aps.iter_mut().zip(&self.ap_len) {
+            y = allpass(d, len, g, y);
+        }
+        y
+    }
+}
+
+/// Stereo tape style delay: gliding time changes, wow, flutter and random speed drift (independent
+/// per side), repeats that pass through a tape head model (`TapeHead`) and bloom into a wash as
+/// DIFFUSE comes up, ping-pong spread and ducking. Repeats ring out when switched off.
 /// (Tap tempo lives in the UI: it just sets the TIME knob.)
 pub struct Delay {
     dl: DelayLine,
     dr: DelayLine,
-    lp_l: OnePole,
-    lp_r: OnePole,
-    lp2_l: OnePole,
-    lp2_r: OnePole,
-    hp_l: OnePole,
-    hp_r: OnePole,
+    hl: TapeHead,
+    hr: TapeHead,
     fs: f64,
     t_sm: f64,
+    g_sm: f64,
     ws: f64,
     wcs: f64,
     fsn: f64,
@@ -518,14 +629,11 @@ impl Delay {
         Delay {
             dl: DelayLine::new(1),
             dr: DelayLine::new(1),
-            lp_l: OnePole::default(),
-            lp_r: OnePole::default(),
-            lp2_l: OnePole::default(),
-            lp2_r: OnePole::default(),
-            hp_l: OnePole::default(),
-            hp_r: OnePole::default(),
+            hl: TapeHead::new(41),
+            hr: TapeHead::new(67),
             fs: 48000.0,
             t_sm: 0.0,
+            g_sm: 0.0,
             ws: 0.0,
             wcs: 1.0,
             fsn: 0.0,
@@ -539,14 +647,20 @@ impl Delay {
     }
 }
 
+/// DIFFUSE knob to allpass coefficient.
+fn echo_diffusion(v: f32) -> f64 {
+    v as f64 * 0.7
+}
+
 impl StereoFx for Delay {
     fn prepare(&mut self, fs: f64, enabled: bool, p: &[f32]) {
         self.fs = fs;
         self.dl = DelayLine::new((fs * 1.9) as usize);
         self.dr = DelayLine::new((fs * 1.9) as usize);
-        self.hp_l.set_low_pass(fs, 110.0);
-        self.hp_r.set_low_pass(fs, 110.0);
+        self.hl.prepare(fs, 0);
+        self.hr.prepare(fs, 1);
         self.t_sm = delay_time_ms(p[0]) * fs / 1000.0;
+        self.g_sm = echo_diffusion(p[7]);
         self.env_atk = coef(fs, 0.005);
         self.env_rel = coef(fs, 0.3);
         self.feed = if enabled { 1.0 } else { 0.0 };
@@ -560,12 +674,11 @@ impl StereoFx for Delay {
         }
         let target = delay_time_ms(p[0]) * fs / 1000.0;
         let (fb, mix, md, s, duck) = (p[1] as f64 * 0.97, p[2] as f64 * 1.1, p[4] as f64, p[5] as f64, p[6] as f64);
+        let g_target = echo_diffusion(p[7]);
         let tone = log(p[3] as f64, 1200.0, 14000.0);
-        self.lp_l.set_low_pass(fs, tone);
-        self.lp_r.set_low_pass(fs, tone);
-        self.lp2_l.set_low_pass(fs, tone * 1.5);
-        self.lp2_r.set_low_pass(fs, tone * 1.5);
-        let (glide, feed_step) = (coef(fs, 0.12), 1.0 / (fs * 0.02));
+        self.hl.set_tone(fs, tone);
+        self.hr.set_tone(fs, tone);
+        let (glide, feed_step, drift_slew) = (coef(fs, 0.12), 1.0 / (fs * 0.02), coef(fs, 0.35));
         let (wc1, ws1) = ((2.0 * PI * 0.55 / fs).cos(), (2.0 * PI * 0.55 / fs).sin());
         let (fc1, fs1) = ((2.0 * PI * 5.7 / fs).cos(), (2.0 * PI * 5.7 / fs).sin());
         // renormalise the LFO phasors per block
@@ -583,29 +696,27 @@ impl StereoFx for Delay {
         } else {
             self.fcs = 1.0;
         }
-        let (wow_d, flut_d) = (md * 0.0035 * fs, md * 0.00035 * fs);
+        let (wow_d, flut_d, drift_d) = (md * 0.003 * fs, md * 0.0003 * fs, md * 0.0025 * fs);
         let ft = if enabled { 1.0 } else { 0.0 };
         let mut peak: f64 = 0.0;
         for i in 0..l.len() {
             self.feed = ramp(self.feed, ft, feed_step);
             self.t_sm += glide * (target - self.t_sm);
+            self.g_sm += glide * (g_target - self.g_sm);
             let t1 = self.ws * wc1 + self.wcs * ws1;
             self.wcs = self.wcs * wc1 - self.ws * ws1;
             self.ws = t1; // rotate wow phasor
             let t2 = self.fsn * fc1 + self.fcs * fs1;
             self.fcs = self.fcs * fc1 - self.fsn * fs1;
             self.fsn = t2; // rotate flutter phasor
-            let m = wow_d * self.ws + flut_d * self.fsn;
-            let rl = self.dl.read(self.t_sm + m);
-            let rr = self.dr.read(self.t_sm - m * 0.8 + 0.0007 * fs * s);
-
-            // repeats get darker, thinner and gently saturated each pass
-            let a = self.lp_l.low_pass(rl);
-            let a = self.lp2_l.low_pass(a);
-            let ql = (1.15 * self.hp_l.high_pass(a)).tanh() / 1.15;
-            let b = self.lp_r.low_pass(rr);
-            let b = self.lp2_r.low_pass(b);
-            let qr = (1.15 * self.hp_r.high_pass(b)).tanh() / 1.15;
+            // the right side runs a quarter cycle behind and has its own drift: the image moves
+            // instead of the two sides pulling against each other
+            let ml = wow_d * self.ws + flut_d * self.fsn + drift_d * self.hl.drift.step(fs, drift_slew);
+            let mr = 0.9 * (wow_d * self.wcs + flut_d * self.fcs) + drift_d * self.hr.drift.step(fs, drift_slew);
+            let rl = self.dl.read(self.t_sm - self.hl.ap_sum + ml);
+            let rr = self.dr.read(self.t_sm - self.hr.ap_sum + mr + 0.0007 * fs * s);
+            let ql = self.hl.tick(rl, self.g_sm);
+            let qr = self.hr.tick(rr, self.g_sm);
 
             let (dry_l, dry_r) = (l[i] as f64, r[i] as f64);
             let mono = 0.5 * (dry_l + dry_r);
@@ -617,11 +728,71 @@ impl StereoFx for Delay {
             let am = mono.abs();
             self.env += (if am > self.env { self.env_atk } else { self.env_rel }) * (am - self.env);
             let wet = mix / (1.0 + duck * 25.0 * self.env);
-            l[i] = (dry_l + rl * wet) as f32;
-            r[i] = (dry_r + rr * wet) as f32;
-            peak = peak.max(rl.abs() + rr.abs());
+            l[i] = (dry_l + ql * wet) as f32;
+            r[i] = (dry_r + qr * wet) as f32;
+            peak = peak.max(ql.abs() + qr.abs());
         }
         self.quiet = if peak < 1e-5 { self.quiet + l.len() } else { 0 };
+    }
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+
+    fn run(p: [f32; 8], seconds: f64, input: impl Fn(usize) -> f32) -> (Vec<f32>, Vec<f32>) {
+        let fs = 48000.0;
+        let mut d = Delay::new();
+        d.prepare(fs, true, &p);
+        let n = (fs * seconds) as usize;
+        let (mut l, mut r): (Vec<f32>, Vec<f32>) = ((0..n).map(&input).collect(), (0..n).map(&input).collect());
+        for (a, b) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
+            d.process(a, b, &p, true);
+        }
+        (l, r)
+    }
+
+    fn peak(x: &[f32]) -> f32 {
+        x.iter().fold(0.0, |m, v| m.max(v.abs()))
+    }
+
+    /// With DIFFUSE and MOD at zero the first repeat lands on TIME (the allpass delay is taken out
+    /// of the main line; what is left is the few samples of filter lag).
+    #[test]
+    fn first_repeat_is_on_time() {
+        let time = 0.5f32;
+        let p = [time, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+        let (l, _) = run(p, 1.0, |i| if i == 0 { 0.5 } else { 0.0 });
+        let at = (1..l.len()).max_by(|&a, &b| l[a].abs().total_cmp(&l[b].abs())).unwrap();
+        let want = delay_time_ms(time) * 48.0;
+        assert!((at as f64 - want).abs() < 12.0, "repeat at {at}, wanted {want}");
+    }
+
+    /// Full feedback, full diffusion, loud input: the repeats must still die away, and the tape
+    /// curve must not leave the loop sitting on a DC offset.
+    #[test]
+    fn full_feedback_decays() {
+        let p = [0.45, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0];
+        let burst = |i: usize| if i < 9600 { (i as f32 * 0.03).sin() * 0.9 } else { 0.0 };
+        let (l, r) = run(p, 40.0, burst);
+        let fs = 48000;
+        let early = peak(&l[fs..3 * fs]).max(peak(&r[fs..3 * fs]));
+        let late = peak(&l[38 * fs..]).max(peak(&r[38 * fs..]));
+        assert!(l.iter().chain(&r).all(|v| v.is_finite()));
+        assert!(early > 0.05, "no repeats: {early}");
+        assert!(late < early * 0.2, "not decaying: {early} -> {late}");
+    }
+
+    /// DIFFUSE spreads a click out in time and makes the two sides differ.
+    #[test]
+    fn diffusion_smears_and_widens() {
+        let click = |i: usize| if i == 0 { 0.5 } else { 0.0 };
+        let (dry_l, dry_r) = run([0.5, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0], 1.0, click);
+        let (wet_l, wet_r) = run([0.5, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0], 1.0, click);
+        assert!(peak(&wet_l[1..]) < peak(&dry_l[1..]) * 0.6);
+        let diff = |a: &[f32], b: &[f32]| a.iter().zip(b).fold(0.0f32, |m, (x, y)| m.max((x - y).abs()));
+        assert!(diff(&dry_l, &dry_r) < 1e-6);
+        assert!(diff(&wet_l, &wet_r) > 0.01);
     }
 }
 
