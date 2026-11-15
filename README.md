@@ -23,7 +23,7 @@ Jwala is a guitar amp simulator with a full signal chain: pedals, a tube amp, a 
 
 ### Header and global controls
 
-Along the top: the preset selector (◀ ▶ to step, **SAVE** to store your own), **TUNER**, the **INPUT** (±12 dB), noise **GATE** and **OUTPUT** knobs, in/out meters, the power button and **⚙ Settings**. Below it, the **signal chain** bar shows every stage at a glance: which pedals are on, the amp channel, the cab model, a mini EQ curve and the active effects. Click a stage to open its page.
+Along the top: the preset selector (◀ ▶ to step, **SAVE** to store your own), **TUNER**, the **INPUT** (±12 dB), noise **GATE** and **OUTPUT** knobs, in/out meters, the power button and **⚙ Settings**. The status readout at the top right shows the audio device, sample rate, buffer size and CPU load. Below it, the **signal chain** bar shows every stage at a glance: which pedals are on, the amp channel, the cab model, a mini EQ curve and the active effects. Click a stage to open its page.
 
 ### Pre-amp pedals
 
@@ -110,6 +110,8 @@ Shows the note, a cents needle, a strobe and the nearest standard-tuning string.
 1. Run `Jwala.exe`. Audio starts automatically with your last device: ASIO if available, otherwise WASAPI. The status at the top right says why if it can't start.
 2. Open **⚙ Settings** to choose the driver, the input/output device and the input channel. For ASIO, buffer size and sample rate come from the driver's control panel, which you can open from Settings.
 3. No guitar handy? Choose **DI file** in Settings to loop a dry recording (`.wav`) through the rig.
+
+If no usable GPU driver is found, the UI is drawn on the CPU instead and the status reads **CPU rendering (no GPU)**. Everything still works, but the window is drawn at 1x and scaled by Windows.
 
 Settings and the last state are saved in `%AppData%\Jwala\jwala-rs.json`.
 
