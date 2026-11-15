@@ -911,7 +911,7 @@ pub fn make_post(id: &str) -> Box<dyn StereoFx> {
     match id {
         "doubler" => Box::new(Doubler::new()),
         "chorus" => Box::new(Chorus::new()),
-        "phaser" => Box::new(Phaser::default()),
+        "phaser" => Box::new(Phaser::new()),
         "delay" => Box::new(Delay::new()),
         _ => Box::new(Reverb::new()),
     }
@@ -1603,74 +1603,302 @@ mod chorus_tests {
     }
 }
 
-/// Six-stage stereo phaser with resonance.
-#[derive(Default)]
+/// Allpass corner sweep of PHASE 6 at DEPTH 10, Hz. Six first-order stages give three notches,
+/// at about 0.27x, 1x and 3.7x the corner, so this sweeps the notches over roughly 60 Hz - 10 kHz.
+const PH_LO_HZ: f64 = 220.0;
+const PH_HI_HZ: f64 = 2600.0;
+/// Each stage sits a little off the others (in octaves), like the unmatched JFETs/caps of a real
+/// box: the notches come out broader and softer, a vocal swirl rather than a thin comb.
+const PH_STAGGER_OCT: [f64; 6] = [-0.21, -0.12, -0.04, 0.04, 0.12, 0.21];
+/// Coefficients are computed every PH_CTRL samples and glide linearly in between (no zipper).
+const PH_CTRL: usize = 16;
+/// Slow wander of each side's sweep centre (incommensurate rates), so it never sounds looped.
+const PH_WANDER_HZ: [f64; 2] = [0.071, 0.053];
+const PH_WANDER_OCT: f64 = 0.15;
+/// RESO at 10 sets this much feedback. The loop is band-limited (lows stay out so it never
+/// booms, the top is softened so the peaks sing instead of whistle) and soft-saturated.
+const PH_FB_MAX: f64 = 0.8;
+const PH_FB_LOW_HZ: f64 = 120.0;
+const PH_FB_HIGH_HZ: f64 = 5500.0;
+/// The resonance peaks add level; the wet path gives it back by this much per unit of feedback.
+const PH_FB_MAKEUP: f64 = 0.35;
+
+/// Lush stereo six-stage phaser. The two sides sweep in quadrature with their own slow wander,
+/// the stages are slightly staggered, the sweep is exponential (equal time per octave) and
+/// glides sample by sample, and the resonance runs through a filtered, saturating feedback loop.
 pub struct Phaser {
-    zl: [f64; 6],
-    zr: [f64; 6],
+    z: [[f64; 6]; 2],
+    a: [[f64; 6]; 2],
+    a_step: [[f64; 6]; 2],
+    fb: [f64; 2],
+    fb_hp: [OnePole; 2],
+    fb_lp: [OnePole; 2],
     fs: f64,
     phase: f64,
-    fbl: f64,
-    fbr: f64,
+    wander: [f64; 2],
+    ctr: usize,
+    /// smoothed DEPTH, feedback amount and MIX
+    depth: f64,
+    reso: f64,
+    mix: f64,
     fade: f64,
     fade_step: f64,
-    al: f64,
-    ar: f64,
 }
 
 impl Phaser {
-    fn chain(mut x: f64, a: f64, z: &mut [f64; 6]) -> f64 {
-        for zs in z.iter_mut() {
-            let y = a * x + *zs;
-            *zs = x - a * y;
-            x = y;
+    fn new() -> Self {
+        Phaser {
+            z: [[0.0; 6]; 2],
+            a: [[0.0; 6]; 2],
+            a_step: [[0.0; 6]; 2],
+            fb: [0.0; 2],
+            fb_hp: [OnePole::default(); 2],
+            fb_lp: [OnePole::default(); 2],
+            fs: 48000.0,
+            phase: 0.0,
+            wander: [0.0, 2.1],
+            ctr: 0,
+            depth: 0.0,
+            reso: 0.0,
+            mix: 0.0,
+            fade: 0.0,
+            fade_step: 0.0,
         }
-        x
     }
-    fn ap_coef(fs: f64, f: f64) -> f64 {
-        let t = (PI * f / fs).tan();
-        (t - 1.0) / (t + 1.0)
+
+    fn knobs(p: &[f32]) -> (f64, f64, f64, f64) {
+        (log(p[0] as f64, 0.05, 8.0), p[1] as f64, p[2] as f64 * PH_FB_MAX, p[3] as f64)
+    }
+
+    /// Allpass coefficients of side `c` at the current LFO position.
+    fn coefs(&self, c: usize) -> [f64; 6] {
+        let half = 0.5 * (PH_HI_HZ / PH_LO_HZ).log2();
+        let centre = (PH_LO_HZ * PH_HI_HZ).sqrt();
+        // right side 90 degrees behind the left
+        let lfo = (self.phase - c as f64 * 0.5 * PI).sin();
+        let oct = self.depth * (half * lfo + PH_WANDER_OCT * self.wander[c].sin());
+        let mut a = [0.0; 6];
+        for (k, ak) in a.iter_mut().enumerate() {
+            let f = (centre * 2f64.powf(oct + PH_STAGGER_OCT[k])).min(0.45 * self.fs);
+            let t = (PI * f / self.fs).tan();
+            *ak = (t - 1.0) / (t + 1.0);
+        }
+        a
+    }
+
+    /// Advances the LFOs by one control period and aims the coefficients at their next values.
+    fn retarget(&mut self, rate: f64, depth: f64, reso: f64, mix: f64) {
+        let dt = PH_CTRL as f64 / self.fs;
+        let k = coef(self.fs / PH_CTRL as f64, 0.05);
+        self.depth += k * (depth - self.depth);
+        self.reso += k * (reso - self.reso);
+        self.mix += k * (mix - self.mix);
+        self.phase = (self.phase + 2.0 * PI * rate * dt) % (2.0 * PI);
+        for c in 0..2 {
+            self.wander[c] = (self.wander[c] + 2.0 * PI * PH_WANDER_HZ[c] * dt) % (2.0 * PI);
+            let to = self.coefs(c);
+            for s in 0..6 {
+                self.a_step[c][s] = (to[s] - self.a[c][s]) / PH_CTRL as f64;
+            }
+        }
+    }
+
+    fn reset_state(&mut self) {
+        self.z = [[0.0; 6]; 2];
+        self.fb = [0.0; 2];
+        for c in 0..2 {
+            self.fb_hp[c].reset();
+            self.fb_lp[c].reset();
+        }
+    }
+}
+
+impl Default for Phaser {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl StereoFx for Phaser {
-    fn prepare(&mut self, fs: f64, enabled: bool, _p: &[f32]) {
+    fn prepare(&mut self, fs: f64, enabled: bool, p: &[f32]) {
         self.fs = fs;
-        self.zl = [0.0; 6];
-        self.zr = [0.0; 6];
-        self.fbl = 0.0;
-        self.fbr = 0.0;
+        self.reset_state();
+        for c in 0..2 {
+            self.fb_hp[c].set_low_pass(fs, PH_FB_LOW_HZ);
+            self.fb_lp[c].set_low_pass(fs, PH_FB_HIGH_HZ.min(0.4 * fs));
+        }
         self.fade_step = 1.0 / (fs * 0.015);
         self.fade = if enabled { 1.0 } else { 0.0 };
+        let (_, depth, reso, mix) = Self::knobs(p);
+        (self.depth, self.reso, self.mix) = (depth, reso, mix);
+        (self.phase, self.wander, self.ctr) = (0.0, [0.0, 2.1], 0);
+        for c in 0..2 {
+            self.a[c] = self.coefs(c);
+            self.a_step[c] = [0.0; 6];
+        }
     }
 
     fn process(&mut self, l: &mut [f32], r: &mut [f32], p: &[f32], enabled: bool) {
         if !enabled && self.fade == 0.0 {
             return;
         }
-        let fs = self.fs;
-        let (rate, depth, fb, mix) = (log(p[0] as f64, 0.05, 8.0), p[1] as f64, p[2] as f64 * 0.85, p[3] as f64);
-        let inc = 2.0 * PI * rate / fs;
+        if self.fade == 0.0 {
+            // switched on: start the loop from silence
+            self.reset_state();
+        }
+        let (rate, depth, reso, mix) = Self::knobs(p);
         let t = if enabled { 1.0 } else { 0.0 };
         for i in 0..l.len() {
             self.fade = ramp(self.fade, t, self.fade_step);
-            self.phase += inc;
-            if self.phase > 2.0 * PI {
-                self.phase -= 2.0 * PI;
+            if self.ctr == 0 {
+                self.retarget(rate, depth, reso, mix);
             }
-            if i & 7 == 0 {
-                let (ml, mr) = (0.5 + 0.5 * self.phase.sin(), 0.5 + 0.5 * self.phase.cos());
-                self.al = Self::ap_coef(fs, 180.0 * (4200.0f64 / 180.0).powf(ml * depth));
-                self.ar = Self::ap_coef(fs, 180.0 * (4200.0f64 / 180.0).powf(mr * depth));
+            self.ctr = (self.ctr + 1) % PH_CTRL;
+
+            let m = self.mix * self.fade;
+            let makeup = 1.0 / (1.0 + PH_FB_MAKEUP * self.reso / PH_FB_MAX);
+            // dry and wet in random phase average to (1-m/2)^2 + (m/2)^2 of the power: give it back
+            let level = 1.0 / (1.0 - m + 0.5 * m * m).sqrt();
+            for (c, ch) in [&mut *l, &mut *r].into_iter().enumerate() {
+                let x = ch[i] as f64;
+                let mut y = x + self.fb[c];
+                for s in 0..6 {
+                    let a = self.a[c][s] + self.a_step[c][s];
+                    self.a[c][s] = a;
+                    let o = a * y + self.z[c][s];
+                    self.z[c][s] = y - a * o;
+                    y = o;
+                }
+                // band-limited, soft-saturated resonance
+                let f = self.fb_lp[c].low_pass(self.fb_hp[c].high_pass(y));
+                self.fb[c] = (self.reso * f).tanh() + 1e-20;
+                ch[i] = ((x * (1.0 - 0.5 * m) + y * 0.5 * m * makeup) * level) as f32;
             }
-            let yl = Self::chain(l[i] as f64 + self.fbl * fb, self.al, &mut self.zl);
-            let yr = Self::chain(r[i] as f64 + self.fbr * fb, self.ar, &mut self.zr);
-            self.fbl = yl + 1e-20;
-            self.fbr = yr + 1e-20;
-            let m = mix * self.fade;
-            l[i] = (l[i] as f64 * (1.0 - 0.5 * m) + yl * 0.5 * m) as f32;
-            r[i] = (r[i] as f64 * (1.0 - 0.5 * m) + yr * 0.5 * m) as f32;
         }
+    }
+}
+
+#[cfg(test)]
+mod phaser_tests {
+    use super::*;
+
+    const FS: f64 = 48000.0;
+
+    fn run(p: [f32; 4], seconds: f64, input: impl Fn(usize) -> f32) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let mut ph = Phaser::new();
+        ph.prepare(FS, true, &p);
+        let n = (FS * seconds) as usize;
+        let dry: Vec<f32> = (0..n).map(&input).collect();
+        let (mut l, mut r) = (dry.clone(), dry.clone());
+        for (a, b) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
+            ph.process(a, b, &p, true);
+        }
+        (dry, l, r)
+    }
+
+    fn rms(x: &[f32]) -> f64 {
+        (x.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / x.len() as f64).sqrt()
+    }
+
+    fn sine(hz: f64, amp: f64) -> impl Fn(usize) -> f32 {
+        move |i| (amp * (2.0 * PI * hz * i as f64 / FS).sin()) as f32
+    }
+
+    /// A new plucked note (a few decaying harmonics) every 230 ms, walking over a scale.
+    fn plucks(i: usize) -> f32 {
+        let period = (0.23 * FS) as usize;
+        let (note, k) = (i / period, (i % period) as f64 / FS);
+        let f = 110.0 * 2f64.powf([0.0, 3.0, 5.0, 7.0, 10.0, 12.0, 15.0][note % 7] / 12.0);
+        let mut y = 0.0;
+        for h in 1..=8 {
+            y += (2.0 * PI * f * h as f64 * k).sin() / h as f64 * (-k * (3.0 + 2.0 * h as f64)).exp();
+        }
+        (0.3 * y) as f32
+    }
+
+    /// Loudness barely moves when the pedal goes on, at any MIX and RESO; the sides match.
+    #[test]
+    fn level_is_kept() {
+        for reso in [0.0, 0.4, 1.0] {
+            for mix in [0.5, 1.0] {
+                let (dry, l, r) = run([0.3, 0.75, reso, mix], 10.0, plucks);
+                assert!(l.iter().chain(&r).all(|v| v.is_finite()));
+                let (d, a, b) = (rms(&dry), rms(&l), rms(&r));
+                let (la, lb) = (20.0 * (a / d).log10(), 20.0 * (b / d).log10());
+                println!("reso {reso} mix {mix}: {la:+.2} / {lb:+.2} dB");
+                assert!(la.abs() < 2.0 && lb.abs() < 2.0, "reso {reso} mix {mix}: {la} / {lb} dB");
+                assert!((la - lb).abs() < 0.8);
+            }
+        }
+    }
+
+    /// Full RESO does not boom: the lows pass at their own level.
+    #[test]
+    fn resonance_does_not_boom() {
+        let (dry, l, _) = run([0.3, 0.75, 1.0, 1.0], 4.0, sine(50.0, 0.3));
+        let g = 20.0 * (rms(&l[48000..]) / rms(&dry[48000..])).log10();
+        println!("50 Hz at full reso: {g:+.2} dB");
+        assert!(g.abs() < 2.0, "{g} dB");
+    }
+
+    /// Flat out on a hot, loud input it stays bounded.
+    #[test]
+    fn stable_flat_out() {
+        for rate in [0.0, 0.5, 1.0] {
+            let (_, l, r) = run([rate, 1.0, 1.0, 1.0], 6.0, |i| 3.0 * plucks(i));
+            let peak = l.iter().chain(&r).fold(0.0f32, |m, v| m.max(v.abs()));
+            println!("rate {rate}: peak {peak}");
+            assert!(peak.is_finite() && peak < 6.0, "peak {peak}");
+        }
+    }
+
+    /// The notches really sweep: a held tone rises and falls, with a deep dip, and the two
+    /// sides dip at different times.
+    #[test]
+    fn notches_sweep() {
+        let (_, l, r) = run([0.3, 0.75, 0.4, 1.0], 12.0, sine(700.0, 0.3));
+        let env = |x: &[f32]| -> Vec<f64> { x[9600..].chunks_exact(480).map(rms).collect() };
+        let (el, er) = (env(&l), env(&r));
+        let (lo, hi) = el.iter().fold((f64::MAX, 0.0f64), |(a, b), v| (a.min(*v), b.max(*v)));
+        let depth = 20.0 * (hi / lo).log10();
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let (ml, mr) = (mean(&el), mean(&er));
+        let cov: f64 = el.iter().zip(&er).map(|(a, b)| (a - ml) * (b - mr)).sum();
+        let corr = cov / (el.iter().map(|a| (a - ml).powi(2)).sum::<f64>() * er.iter().map(|b| (b - mr).powi(2)).sum::<f64>()).sqrt();
+        println!("700 Hz swing {depth:.1} dB, L/R envelope correlation {corr:.2}");
+        assert!(depth > 12.0, "shallow sweep: {depth} dB");
+        assert!(corr < 0.65, "sides move together: {corr}");
+    }
+
+    /// Turning knobs while playing glides, it does not click.
+    #[test]
+    fn knob_moves_are_smooth() {
+        let mut ph = Phaser::new();
+        ph.prepare(FS, true, &[0.3, 0.0, 0.0, 0.0]);
+        let (mut worst, mut prev) = (0.0f32, 0.0f32);
+        for b in 0..200 {
+            let p = if (b / 20) % 2 == 0 { [0.3, 0.0, 0.0, 0.0] } else { [0.9, 1.0, 1.0, 1.0] };
+            let mut l: Vec<f32> = (0..256).map(|i| sine(220.0, 0.3)(b * 256 + i)).collect();
+            let mut r = l.clone();
+            ph.process(&mut l, &mut r, &p, true);
+            for v in l {
+                worst = worst.max((v - prev).abs());
+                prev = v;
+            }
+        }
+        println!("largest step {worst}");
+        assert!(worst < 0.03, "step of {worst}");
+    }
+
+    #[test]
+    fn bypassed_is_untouched() {
+        let p = [0.3, 0.75, 0.4, 0.5];
+        let mut ph = Phaser::new();
+        ph.prepare(FS, false, &p);
+        let dry: Vec<f32> = (0..4800).map(plucks).collect();
+        let (mut l, mut r) = (dry.clone(), dry.clone());
+        ph.process(&mut l, &mut r, &p, false);
+        assert!(l == dry && r == dry);
     }
 }
 
