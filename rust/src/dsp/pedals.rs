@@ -648,47 +648,253 @@ mod distortion_tests {
     }
 }
 
-/// Big wall-of-fuzz: two cascaded clipping stages and a mid-scoop tone control.
+// Muffler clipping stage: a transistor gain stage fed through a coupling cap and a resistor, with
+// a 470k resistor, a small cap and a pair of diodes from its output back to its input.
+const FUZZ_IN_R: f64 = 10e3;
+const FUZZ_IN_C: f64 = 0.1e-6;
+const FUZZ_FB_R: f64 = 470e3;
+const FUZZ_FB_C: f64 = 470e-12;
+/// The two diodes of a pair are never quite alike: the second conducts a little earlier and
+/// gives way a little more gradually, so the halves of the wave differ and the fuzz keeps some
+/// even harmonics.
+const FUZZ_IS_B: f64 = 2.5 * OD_IS;
+const FUZZ_NVT_B: f64 = 1.12 * OD_NVT;
+/// Gain of the booster in front of the SUSTAIN pot.
+const FUZZ_BOOST: f64 = 6.0;
+/// Once the diodes conduct, the feedback cap only rounds the edges of the wave.
+const FUZZ_EDGE_HZ: f64 = 7000.0;
+/// How far the second stage is pushed off centre, as a fraction of the level it is being fed.
+const FUZZ_LEAN: f64 = 0.05;
+// Tone stack: a 39k + 10 nF low-pass and a 4 nF + 22k high-pass, with the 100k TONE pot strung
+// between their outputs.
+const FUZZ_TONE_R1: f64 = 39e3;
+const FUZZ_TONE_C1: f64 = 10e-9;
+const FUZZ_TONE_C2: f64 = 4e-9;
+const FUZZ_TONE_R2: f64 = 22e3;
+const FUZZ_TONE_POT: f64 = 100e3;
+/// Recovery gain after the tone stack: with VOLUME at noon the fuzz sits level with the drives.
+const FUZZ_MAKEUP: f64 = 6.4;
+
+/// One clipping stage of the fuzz: returns the voltage across the feedback loop (resistor and
+/// diode pair) that carries the input current `i`, anti-aliased by averaging the solved curve
+/// over the step from the previous sample, as `Overdrive` does.
 #[derive(Default)]
-pub struct Fuzz {
-    hp1: OnePole,
-    hp2: OnePole,
-    lp1: OnePole,
-    lp2: OnePole,
-    tone_lp: OnePole,
-    tone_hp: OnePole,
-    g1: f64,
-    lvl: f64,
-    tone: f64,
+struct FuzzClip {
+    i1: f64,
+    v1: f64,
+    f1: f64,
 }
 
-impl Fuzz {
-    fn clip(v: f64) -> f64 {
-        v / (1.0 + v.abs().powf(2.5)).powf(0.4)
+impl FuzzClip {
+    fn reset(&mut self) {
+        (self.i1, self.v1, self.f1) = (0.0, 0.0, 0.0);
     }
+    #[inline]
+    fn tick(&mut self, i: f64) -> f64 {
+        const GR: f64 = 1.0 / FUZZ_FB_R;
+        let i = i.clamp(-5e-3, 5e-3);
+        let mut v = self.v1;
+        let (mut ep, mut en) = (0.0, 0.0);
+        for _ in 0..24 {
+            (ep, en) = (OD_IS * (v / OD_NVT).exp(), FUZZ_IS_B * (-v / FUZZ_NVT_B).exp());
+            let f = GR * v + (ep - OD_IS) - (en - FUZZ_IS_B) - i;
+            let dv = (f / (GR + ep / OD_NVT + en / FUZZ_NVT_B)).clamp(-0.1, 0.1);
+            v -= dv;
+            if dv.abs() < 1e-10 {
+                break;
+            }
+        }
+        // integral of v over i, in closed form from the solution: v i - (integral of i over v)
+        let f = v * i - (0.5 * GR * v * v + OD_NVT * (ep - OD_IS) - OD_IS * v + FUZZ_NVT_B * (en - FUZZ_IS_B) + FUZZ_IS_B * v);
+        let di = i - self.i1;
+        let vd = if di.abs() < 1e-11 { 0.5 * (v + self.v1) } else { (f - self.f1) / di };
+        (self.i1, self.v1, self.f1) = (i, v, f);
+        vd
+    }
+}
+
+/// Big wall-of-fuzz, modelled on the circuit: a booster, the SUSTAIN pot, two clipping stages
+/// and the scooped tone stack. Each clipping stage is a gain stage with a diode pair in its
+/// feedback loop, solved every sample for the voltage that carries the input current, so the
+/// knee is the diodes' own gradual one and notes sink into the fuzz smoothly as they die away.
+/// The feedback cap makes each stage dark until the diodes conduct, which is what keeps the
+/// sustain thick and singing instead of fizzy; the coupling caps between the stages keep chords
+/// from turning to mud. The second stage leans off centre in proportion to the level it is fed,
+/// which shifts the duty cycle of the wave and keeps second harmonic in the sound from the pick
+/// to the tail of the note. TONE is the pedal's passive stack: lows only at one end, highs only at
+/// the other, the mids scooped in between.
+#[derive(Default)]
+pub struct Fuzz {
+    inp: OnePole,
+    boost: OnePole,
+    hp1: OnePole,
+    hp2: OnePole,
+    cap1: OnePole,
+    cap2: OnePole,
+    edge1: OnePole,
+    edge2: OnePole,
+    out: OnePole,
+    c1: FuzzClip,
+    c2: FuzzClip,
+    tone: Biquad,
+    fs: f64,
+    env: f64,
+    atk: f64,
+    rel: f64,
+    sustain: f64,
+    lvl: f64,
 }
 
 impl SampleFx for Fuzz {
     fn init(&mut self, fs: f64) {
-        self.hp1.set_low_pass(fs, 90.0);
-        self.hp2.set_low_pass(fs, 120.0);
-        self.lp1.set_low_pass(fs, 6000.0);
-        self.lp2.set_low_pass(fs, 5000.0);
-        self.tone_lp.set_low_pass(fs, 900.0);
-        self.tone_hp.set_low_pass(fs, 1100.0);
+        self.fs = fs;
+        self.inp.set_low_pass(fs, 30.0);
+        self.boost.set_low_pass(fs, 3400.0);
+        let couple = 1.0 / (2.0 * PI * FUZZ_IN_R * FUZZ_IN_C);
+        self.hp1.set_low_pass(fs, couple);
+        self.hp2.set_low_pass(fs, couple);
+        let cap = 1.0 / (2.0 * PI * FUZZ_FB_R * FUZZ_FB_C);
+        self.cap1.set_low_pass(fs, cap);
+        self.cap2.set_low_pass(fs, cap);
+        self.edge1.set_low_pass(fs, FUZZ_EDGE_HZ);
+        self.edge2.set_low_pass(fs, FUZZ_EDGE_HZ);
+        self.out.set_low_pass(fs, 20.0);
+        for f in [&mut self.inp, &mut self.boost, &mut self.hp1, &mut self.hp2, &mut self.cap1, &mut self.cap2, &mut self.edge1, &mut self.edge2, &mut self.out] {
+            f.reset();
+        }
+        self.c1.reset();
+        self.c2.reset();
+        self.tone.reset();
+        self.env = 0.0;
+        self.atk = coef(fs, 0.003);
+        self.rel = coef(fs, 0.08);
     }
     fn update(&mut self, p: &[f32]) {
-        self.g1 = log(p[0] as f64, 6.0, 400.0);
-        self.tone = p[1] as f64;
-        self.lvl = db(-26.0 + 24.0 * p[2] as f64);
+        self.sustain = FUZZ_BOOST * log(p[0] as f64, 0.01, 1.0);
+        // TONE: the output is taken from the pot's wiper, t of the way from the low-pass end to
+        // the high-pass end
+        let t = p[1] as f64;
+        let (g1, g2, gp) = (1.0 / FUZZ_TONE_R1, 1.0 / FUZZ_TONE_R2, 1.0 / FUZZ_TONE_POT);
+        let (c1, c2) = (FUZZ_TONE_C1, FUZZ_TONE_C2);
+        self.tone.analog(
+            self.fs,
+            [g1 * (g2 + gp) - t * g1 * g2, c2 * (g1 + gp), t * c1 * c2],
+            [(g1 + gp) * (g2 + gp) - gp * gp, c1 * (g2 + gp) + c2 * (g1 + gp), c1 * c2],
+        );
+        self.lvl = db(-26.0 + 24.0 * p[2] as f64) * FUZZ_MAKEUP;
     }
     fn tick(&mut self, x: f64) -> f64 {
-        let h1 = self.hp1.high_pass(x);
-        let s = self.lp1.low_pass(Self::clip(h1 * self.g1));
-        let h2 = self.hp2.high_pass(s);
-        let s = self.lp2.low_pass(Self::clip(h2 * 18.0));
-        let y = self.tone_lp.low_pass(s) * (1.0 - self.tone) + self.tone_hp.high_pass(s) * self.tone;
-        y * self.lvl * 1.8
+        let x = self.boost.low_pass(self.inp.high_pass(x)) * self.sustain;
+        // each stage inverts
+        let i = self.cap1.low_pass(self.hp1.high_pass(x) / FUZZ_IN_R);
+        let s1 = -self.edge1.low_pass(self.c1.tick(i));
+        let i = self.cap2.low_pass(self.hp2.high_pass(s1) / FUZZ_IN_R);
+        let a = i.abs();
+        self.env += (if a > self.env { self.atk } else { self.rel }) * (a - self.env);
+        // the second pair is in the other way round
+        let s2 = self.edge2.low_pass(self.c2.tick(-i - FUZZ_LEAN * self.env));
+        self.tone.process(self.out.high_pass(s2)) * self.lvl
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+
+    const FS: f64 = 192000.0;
+    const N: usize = 19200; // 10 Hz bins
+
+    fn make(sustain: f32, tone: f32) -> Fuzz {
+        let mut f = Fuzz::default();
+        f.init(FS);
+        f.update(&[sustain, tone, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        f
+    }
+
+    fn render(fx: &mut dyn SampleFx, hz: f64, amp: f64) -> Vec<f64> {
+        let w = 2.0 * PI * hz / FS;
+        (0..FS as usize / 2 + N).map(|i| fx.tick(amp * (w * i as f64).sin())).skip(FS as usize / 2).collect()
+    }
+
+    fn bin(x: &[f64], hz: usize) -> f64 {
+        let w = 2.0 * PI * hz as f64 / FS;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, v) in x.iter().enumerate() {
+            re += v * (w * i as f64).cos();
+            im += v * (w * i as f64).sin();
+        }
+        (re * re + im * im) / (x.len() as f64 * x.len() as f64) * 4.0
+    }
+
+    fn rms(x: &[f64]) -> f64 {
+        (x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64).sqrt()
+    }
+
+    fn dbr(a: f64, b: f64) -> f64 {
+        10.0 * (a / b).max(1e-30).log10()
+    }
+
+    /// Aliasing (what lands below 20 kHz without being a harmonic) stays far under the harmonics.
+    #[test]
+    fn clean_at_every_sustain() {
+        for sustain in [0.0f32, 0.3, 0.6, 1.0] {
+            for tone in [0.5f32, 1.0] {
+                let x = render(&mut make(sustain, tone), 1240.0, 0.15);
+                let (mut harm, mut other) = (0.0, 0.0);
+                for hz in (20..20000).step_by(10) {
+                    let pw = bin(&x, hz);
+                    if hz % 1240 == 0 { harm += pw } else { other += pw }
+                }
+                let alias = dbr(other, harm);
+                println!("SUSTAIN {sustain:.2} TONE {tone:.2}  alias {alias:6.1} dB");
+                assert!(alias < -78.0, "aliasing at SUSTAIN {sustain}, TONE {tone}: {alias:.1} dB");
+            }
+        }
+    }
+
+    /// Second harmonic stays in the sound at every setting, for low and high notes alike.
+    #[test]
+    fn keeps_even_harmonics() {
+        for sustain in [0.0f32, 0.6, 1.0] {
+            for hz in [110usize, 1240] {
+                let x = render(&mut make(sustain, 0.5), hz as f64, 0.15);
+                let h2 = dbr(bin(&x, 2 * hz), bin(&x, hz));
+                println!("SUSTAIN {sustain:.2} {hz} Hz  H2 {h2:6.1} dB");
+                assert!(h2 > -32.0, "no second harmonic at SUSTAIN {sustain}, {hz} Hz: {h2:.1} dB");
+            }
+        }
+    }
+
+    /// A note that has died away to a fraction of its level is still nearly as loud coming out,
+    /// and SUSTAIN adds length, not volume.
+    #[test]
+    fn sustains_at_an_even_level() {
+        let level = |sustain: f32, amp: f64| rms(&render(&mut make(sustain, 0.5), 440.0, amp));
+        let (loud, tail) = (level(0.6, 0.15), level(0.6, 0.02));
+        let spread = 20.0 * (level(1.0, 0.15) / level(0.3, 0.15)).log10();
+        println!("loud {loud:.3}, tail {tail:.3}, SUSTAIN 0.3 to 1.0 moves the level {spread:.1} dB");
+        assert!((0.13..0.2).contains(&loud), "level {loud}");
+        assert!(20.0 * (loud / tail).log10() < 1.5);
+        assert!(spread.abs() < 1.0);
+    }
+
+    /// TONE goes from lows only to highs only, with the mids scooped at noon.
+    #[test]
+    fn tone_scoops_the_mids() {
+        let gain = |tone: f32, hz: f64| make(0.6, tone).tone.magnitude_db(FS, hz);
+        for tone in [0.0f32, 0.5, 1.0] {
+            println!("TONE {tone:.1}: 100 Hz {:5.1}  1 kHz {:5.1}  5 kHz {:5.1} dB", gain(tone, 100.0), gain(tone, 1000.0), gain(tone, 5000.0));
+        }
+        assert!(gain(0.5, 1000.0) < gain(0.5, 100.0) - 3.0 && gain(0.5, 1000.0) < gain(0.5, 5000.0) - 3.0);
+        assert!(gain(0.0, 5000.0) < gain(0.0, 100.0) - 12.0);
+        assert!(gain(1.0, 100.0) < gain(1.0, 5000.0) - 12.0);
+    }
+
+    #[test]
+    fn silence_stays_silent() {
+        let mut f = make(1.0, 1.0);
+        let peak = (0..20000).map(|_| f.tick(0.0).abs()).fold(0.0, f64::max);
+        assert!(peak < 1e-9, "{peak} from silence");
     }
 }
 
