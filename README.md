@@ -9,14 +9,14 @@ Jwala is a guitar amp simulator with a full signal chain: pedals, a tube amp, a 
 ## Features at a glance
 
 - **Signal chain:** Pedals → Amp → Cab → EQ → Effects, one page per stage.
-- **Amp:** three tube channels (Clean, Crunch, Lead), plus an **acoustic-guitar simulator** for electric DI.
+- **Amp:** four tube channels (Clean, Crunch, Lead, and a circuit-modelled high-gain **Lead II**), plus an **acoustic-guitar simulator** for electric DI.
 - **4 drive and dynamics pedals:** compressor, overdrive, distortion and fuzz.
 - **Cabinet:** 3 built-in speaker models or your own impulse response, with a mic you drag across the speaker.
-- **9-band graphic EQ** with a live response curve.
+- **9-band graphic EQ** with analog-matched bands and a live response curve.
 - **5 stereo effects:** doubler, chorus, phaser, tape echo and a shimmer reverb. Delay and reverb tails keep ringing when switched off.
 - **Chromatic tuner** with strobe and adjustable A4 reference.
-- **12 factory presets**, user presets, and the last state restored on launch.
-- **Plugin parameters are host-automatable**, and the DSP runs at **4x oversampling** for the drive stages.
+- **14 factory presets**, user presets, and the last state restored on launch.
+- **Plugin parameters are host-automatable**, and the DSP runs at **4x oversampling** for the drive stages (8x on Lead II).
 - Builds for **Windows, macOS and Linux** (the macOS and Linux builds compile in CI but haven't been tested).
 
 ## The rig
@@ -31,10 +31,10 @@ Along the top: the preset selector (◀ ▶ to step, **SAVE** to store your own)
 
 | Pedal | Type | Controls |
 |---|---|---|
-| **SQUEEZE** | Compressor | Sustain, attack, level, parallel blend |
-| **GREEN DRIVE** | Mid-hump overdrive | Drive, tone, level |
-| **RODENT** | Op-amp distortion | Distortion, filter, volume |
-| **MUFFLER** | Fuzz | Sustain, tone, volume |
+| **SQUEEZE** | Smooth sustainer with a soft knee and material-dependent release | Sustain, attack, level, parallel blend |
+| **GREEN DRIVE** | Circuit-modelled mid-hump overdrive (diode feedback clipper, active tone) | Drive, tone, level |
+| **RODENT** | Two-stage soft-clipping distortion | Distortion, filter, volume |
+| **MUFFLER** | Circuit-modelled fuzz (two diode-feedback clipping stages, scooped passive tone stack) | Sustain, tone, volume |
 
 Click a footswitch to engage a pedal.
 
@@ -47,6 +47,7 @@ Click a footswitch to engage a pedal.
 - **Clean / Crunch / Lead** channels with 2, 3 or 4 triode stages. Each stage has asymmetric grid-conduction clipping and dynamic bias shift, so the amp responds to how hard you pick.
 - **GAIN, BASS, MID, TREBLE** (a Marshall-style tone stack), **PRESENCE, DEPTH, MASTER** (drives the push-pull power amp, with supply sag) and a **BRIGHT** switch.
 - The **Lead** channel is voiced for a smooth, even high-gain sound: low notes stay tight and the treble comes from the harmonics rather than from fizz.
+- The **Lead II** channel models a high-gain preamp at circuit level: five cascaded 12AX7 stages in real volts, where blocking distortion and bias shift come from the capacitor states. It feeds a push-pull power amp with an output transformer, speaker load and a negative-feedback loop that **PRESENCE** and **DEPTH** act on, so the amp loosens and brightens when pushed. It runs at 8x oversampling.
 - The **Acoustic** channel turns an electric DI into an acoustic guitar. The knobs become **BODY, BASS, MID, TREBLE, AIR, RESO, LEVEL**, the cab's speaker is bypassed, and the guitar is heard through a spaced stereo pair of room mics. Three switches shape the strings:
   - **DECAY**: shortens the electric's long sustain, the way a real acoustic top absorbs string energy.
   - **ATTACK**: reshapes the first 20 ms of each pick (less pickup spike, more string zing).
@@ -59,13 +60,14 @@ Click a footswitch to engage a pedal.
 - Speaker models: **4x12 V30**, **2x12 Alnico**, **1x12 Open**, or **USER IR** (load any `.wav` impulse response).
 - **Drag the mic** across the speaker, from the dust cap to the cone edge, or use **MIC POS**.
 - **DISTANCE** (proximity effect and room), **LOW CUT** and **HIGH CUT**.
-- Zero-latency SIMD convolution.
+- Built-in cabs blend two speakers and four mic positions with a ribbon mic, with cone breakup that depends on mic position, cabinet reflections and a diffuse tail. The mic position crossfades smoothly.
+- Zero-latency partitioned convolution.
 
 ### Graphic EQ
 
 ![EQ page](docs/screenshots/eq.png)
 
-9 octave bands from 63 Hz to 16 kHz (±12 dB each) plus **LEVEL**, in stereo after the cab. The response curve updates live; **FLAT** resets every band. The EQ is off by default.
+9 octave bands from 63 Hz to 16 kHz (±12 dB each) plus **LEVEL**, in stereo after the cab. The band gains are solved so the curve follows the sliders to within a fraction of a dB, and slider moves are smoothed. The response curve updates live; **FLAT** resets every band. The EQ is off by default.
 
 ### Post effects (stereo)
 
@@ -74,10 +76,10 @@ Click a footswitch to engage a pedal.
 | Effect | What it does |
 |---|---|
 | **DOUBLER** | Fakes a double-tracked part: two takes with drifting timing, pitch, level and tone, spread hard left/right |
-| **TRI CHORUS** | Lush stereo chorus |
-| **PHASE 6** | 6-stage phaser with resonance |
-| **TAPE ECHO** | Delay with glide, wow & flutter, darkening and saturating repeats, ping-pong spread, ducking and **tap tempo** |
-| **CATHEDRAL** | Modulated 8-line feedback-delay-network reverb with pre-delay, size, damping and an octave-up **shimmer** |
+| **TRI CHORUS** | Three voices a side on 120°-spaced slow and fast LFOs, with per-voice drift |
+| **PHASE 6** | 6 staggered allpass stages, L/R in quadrature, with a soft-saturating resonance loop |
+| **TAPE ECHO** | Delay with glide, wow & flutter, a tape head model that darkens and saturates the repeats, **DIFFUSE** to bloom them into a wash, ping-pong spread, ducking and **tap tempo** |
+| **CATHEDRAL** | Lush stereo hall: 16-line feedback-delay-network reverb with pre-delay, size, damping and a steady octave-up **shimmer** |
 
 ### Tuner
 
@@ -87,7 +89,7 @@ Shows the note, a cents needle, a strobe and the nearest standard-tuning string.
 
 ## Presets
 
-12 factory presets: **Init, Glass Clean, Ambient Shimmer, Classic Crunch, Blues Lead, Modern Metal, Soaring Solo, Fuzz Wall, Rodent Grunge, Acoustic 1, Acoustic 2, Acoustic 3**.
+14 factory presets: **Init, Glass Clean, Ambient Shimmer, Classic Crunch, Blues Lead, Modern Metal, Soaring Solo, Lead II Rhythm, Lead II Solo, Fuzz Wall, Rodent Grunge, Acoustic 1, Acoustic 2, Acoustic 3**.
 
 **SAVE** stores your own presets as JSON in `%AppData%\Jwala\presets\`. **Ctrl+←/→** steps through presets.
 
@@ -160,10 +162,13 @@ Jwala.exe --render in.wav out.wav "Classic Crunch" amp.GAIN=0.7 ir=my_cab.wav
 
 - **Framework:** [nih-plug](https://github.com/robbert-vdh/nih-plug) for VST3/CLAP. The DSP in `rust/src/dsp/` is independent of the plugin layer.
 - **UI:** a custom **wgpu** renderer. One instanced shader draws every primitive (rounded rects, mipmapped images, glyph-atlas text, glows, lines); pedal and knob soft shadows are real GPU blur passes, cached until the layout changes.
-- **Amp DSP:** 4x oversampled pedals, preamp, tone stack and power amp; the tone stack uses the Yeh & Smith circuit discretization.
-- **Reverb:** a Hadamard feedback delay network with modulated lines and a self-limiting octave-up shimmer loop.
+- **Amp DSP:** 4x oversampled pedals, preamp, tone stack and power amp (8x for Lead II, whose triodes use the Koren plate-current model); the tone stack uses the Yeh & Smith circuit discretization.
+- **Reverb:** a 16-line Hadamard feedback delay network with allpass diffusers, slowly wandering line lengths and a phase-aligned octave-up grain shifter for the shimmer.
+- **EQ:** the band gains are fitted with the Välimäki & Liski cascade graphic-EQ method.
+- **Cab:** a zero-latency partitioned convolver (direct head plus FFT partitions sharing one input FFT).
 - **Acoustic sim:** corrects the magnetic pickup's coil resonance, adds string sparkle with a level-independent 2nd-harmonic exciter, then convolves with a synthetic modal body IR plus air-cavity and top-plate resonators. Its tone was matched against a real acoustic recording.
-- `old-csharp-legacy/` holds the original C# / .NET 8 / NAudio version of the app, The Rust port's offline renders match it to float rounding for every factory preset.
+- `legacy-csharp/` holds the original C# / .NET 8 / NAudio version of the app. It's kept in step with the Rust version (Lead II, the high-quality pedals, EQ and cab), and offline renders from the two match to float rounding for every factory preset.
+- See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## License
 
