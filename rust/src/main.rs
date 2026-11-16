@@ -44,6 +44,11 @@ fn main() {
     if args.len() >= 3 && args[1] == "--audio-test" {
         std::process::exit(audio_test(&args[2..]));
     }
+    // the self-updater's elevated helper: replaces the plugins in folders that need admin rights
+    if args.len() >= 3 && args[1] == "--update-plugins" {
+        let (_, problems) = jwala_plugin::standalone::update::install_plugins(std::path::Path::new(&args[2]), true);
+        std::process::exit(if problems.is_empty() { 0 } else { 1 });
+    }
 
     // the app runs its own audio host (ASIO / WASAPI / DI file, chosen in ⚙ Settings);
     // nih-plug's wrapper only provides the window and parameters, on its silent dummy backend

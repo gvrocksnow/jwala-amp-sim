@@ -282,10 +282,228 @@ fn copy_path(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Swaps the unpacked build in for the running one and starts it. On `Ok` the caller must exit
-/// right away; on `Err` the running app is left as it was.
+// ------------------------------------------------------------------ plugins (VST3 / CLAP)
+
+/// Where Jwala's plugins may be installed, per format: the release's bundle name and the folders
+/// hosts scan. Only copies that already exist are updated; nothing is installed fresh.
+fn plugin_dirs() -> Vec<(&'static str, PathBuf)> {
+    let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
+    let mut v = Vec::new();
+    if cfg!(windows) {
+        if let Some(c) = env("CommonProgramFiles") {
+            v.push(("Jwala.vst3", c.join("VST3")));
+            v.push(("Jwala.clap", c.join("CLAP")));
+        }
+        if let Some(l) = env("LOCALAPPDATA") {
+            v.push(("Jwala.vst3", l.join("Programs/Common/VST3")));
+            v.push(("Jwala.clap", l.join("Programs/Common/CLAP")));
+        }
+    } else if cfg!(target_os = "macos") {
+        let mut roots = vec![PathBuf::from("/Library/Audio/Plug-Ins")];
+        roots.extend(env("HOME").map(|h| h.join("Library/Audio/Plug-Ins")));
+        for r in roots {
+            v.push(("Jwala.vst3", r.join("VST3")));
+            v.push(("Jwala.clap", r.join("CLAP")));
+        }
+    } else {
+        if let Some(h) = env("HOME") {
+            v.push(("Jwala.vst3", h.join(".vst3")));
+            v.push(("Jwala.clap", h.join(".clap")));
+        }
+        for r in ["/usr/lib", "/usr/local/lib"] {
+            v.push(("Jwala.vst3", Path::new(r).join("vst3")));
+            v.push(("Jwala.clap", Path::new(r).join("clap")));
+        }
+    }
+    v
+}
+
+/// Installed plugins and the new build of each: `(installed, new)`.
+fn plugin_targets(staged: &Path) -> Vec<(PathBuf, PathBuf)> {
+    plugin_dirs().into_iter().map(|(name, dir)| (dir.join(name), staged.join(name))).filter(|(t, s)| t.exists() && s.exists()).collect()
+}
+
+/// A free name to move `p` aside to. A previous `.old` that is still loaded by a host can't be
+/// deleted on Windows, so then the next free `.oldN` is used.
+fn free_aside(p: &Path) -> PathBuf {
+    let base = aside(p);
+    remove_any(&base);
+    if !base.exists() {
+        return base;
+    }
+    (1..100).map(|i| PathBuf::from(format!("{}{i}", base.display()))).find(|c| {
+        remove_any(c);
+        !c.exists()
+    }).unwrap_or(base)
+}
+
+/// Replaces `dst` with `src` file by file. Each existing file is renamed aside first, which works
+/// even while a host has it loaded (it keeps the old one until it restarts).
+fn replace_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if src.is_dir() {
+        if !dst.is_dir() {
+            return Err(std::io::Error::other(format!("{} isn't laid out like the new version", dst.display())));
+        }
+        for e in std::fs::read_dir(src)? {
+            let e = e?;
+            let to = dst.join(e.file_name());
+            if e.path().is_dir() && !to.exists() {
+                std::fs::create_dir_all(&to)?;
+            }
+            replace_tree(&e.path(), &to)?;
+        }
+        return Ok(());
+    }
+    if dst.is_dir() {
+        return Err(std::io::Error::other(format!("{} isn't laid out like the new version", dst.display())));
+    }
+    let old = dst.exists().then(|| free_aside(dst));
+    if let Some(old) = &old {
+        std::fs::rename(dst, old)?;
+    }
+    if let Err(e) = std::fs::copy(src, dst) {
+        if let Some(old) = &old {
+            let _ = std::fs::rename(old, dst);
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Updates every installed copy of the plugins from `staged`. Copies in folders that need admin
+/// rights are retried once through an elevated `--update-plugins` run (unless this is that run).
+/// Returns what was updated and what wasn't, for the note shown after the restart.
+pub fn install_plugins(staged: &Path, elevated: bool) -> (Vec<String>, Vec<String>) {
+    let (mut done, mut problems, mut denied) = (Vec::new(), Vec::new(), false);
+    for (target, src) in plugin_targets(staged) {
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match replace_tree(&src, &target) {
+            Ok(()) => done.push(name),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && !elevated => denied = true,
+            Err(e) => problems.push(format!("{name}: {e}")),
+        }
+    }
+    if denied {
+        match run_elevated(staged) {
+            Ok(()) => done.push("the system-wide copies".into()),
+            Err(e) => problems.push(e),
+        }
+    }
+    (done, problems)
+}
+
+/// Runs `jwala --update-plugins <staged>` with admin rights and waits for it.
+fn run_elevated(staged: &Path) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        elevate_windows(&exe, &format!("--update-plugins \"{}\"", staged.display()))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let q = |p: &Path| p.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!("do shell script \"'{}' --update-plugins '{}'\" with administrator privileges", q(&exe), q(staged));
+        let ok = std::process::Command::new("osascript").args(["-e", &script]).status().map_err(|e| e.to_string())?.success();
+        ok.then_some(()).ok_or_else(|| "the plugins in /Library weren't updated (admin access declined)".into())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let ok = std::process::Command::new("pkexec").arg(&exe).arg("--update-plugins").arg(staged).status().map_err(|e| format!("pkexec: {e}"))?.success();
+        ok.then_some(()).ok_or_else(|| "the plugins in /usr weren't updated (admin access declined)".into())
+    }
+}
+
+#[cfg(windows)]
+fn elevate_windows(exe: &Path, params: &str) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    #[repr(C)]
+    struct ShellExecuteInfoW {
+        cb_size: u32,
+        f_mask: u32,
+        hwnd: isize,
+        verb: *const u16,
+        file: *const u16,
+        parameters: *const u16,
+        directory: *const u16,
+        show: i32,
+        inst_app: isize,
+        id_list: *mut std::ffi::c_void,
+        class: *const u16,
+        hkey_class: isize,
+        hot_key: u32,
+        icon_or_monitor: isize,
+        process: isize,
+    }
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteExW(info: *mut ShellExecuteInfoW) -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn WaitForSingleObject(h: isize, ms: u32) -> u32;
+        fn GetExitCodeProcess(h: isize, code: *mut u32) -> i32;
+        fn CloseHandle(h: isize) -> i32;
+    }
+    let wide = |s: &std::ffi::OsStr| s.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let (verb, file, params) = (wide("runas".as_ref()), wide(exe.as_os_str()), wide(params.as_ref()));
+    let mut info = ShellExecuteInfoW {
+        cb_size: std::mem::size_of::<ShellExecuteInfoW>() as u32,
+        f_mask: 0x40 | 0x100, // SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+        hwnd: 0,
+        verb: verb.as_ptr(),
+        file: file.as_ptr(),
+        parameters: params.as_ptr(),
+        directory: std::ptr::null(),
+        show: 0, // SW_HIDE
+        inst_app: 0,
+        id_list: std::ptr::null_mut(),
+        class: std::ptr::null(),
+        hkey_class: 0,
+        hot_key: 0,
+        icon_or_monitor: 0,
+        process: 0,
+    };
+    // fails when the UAC prompt is declined
+    if unsafe { ShellExecuteExW(&mut info) } == 0 || info.process == 0 {
+        return Err("the plugins in Program Files weren't updated (admin access declined)".into());
+    }
+    let mut code = 1u32;
+    unsafe {
+        WaitForSingleObject(info.process, 120_000);
+        GetExitCodeProcess(info.process, &mut code);
+        CloseHandle(info.process);
+    }
+    (code == 0).then_some(()).ok_or_else(|| "updating the plugins in Program Files failed".into())
+}
+
+/// Shown once by the new version after an update ("Updated to v… · plugins: …").
+fn note_path() -> PathBuf {
+    crate::presets::app_dir().join("update-note.txt")
+}
+
+/// The note the previous version left before restarting into this one, if any (read once).
+pub fn take_note() -> Option<String> {
+    let t = std::fs::read_to_string(note_path()).ok()?;
+    let _ = std::fs::remove_file(note_path());
+    Some(t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+// ------------------------------------------------------------------ the app itself
+
+/// Swaps the unpacked build in for the running one (and updates installed plugins), then starts
+/// it. On `Ok` the caller must exit right away; on `Err` the running app is left as it was.
 pub fn install(staged: &Path) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    // plugins first: they are read from `staged`, and the app's swap moves files out of it
+    let (done, problems) = install_plugins(staged, false);
+    let version = staged.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut note = format!("Updated to v{version}");
+    if !done.is_empty() {
+        note += &format!(" · plugins updated (restart your DAW): {}", done.join(", "));
+    }
+    if let Some(p) = problems.first() {
+        note += &format!(" · {p}");
+    }
     let target = install_target(&exe);
     let new = if target == exe && cfg!(target_os = "macos") {
         // a bare binary outside a bundle (a dev build): replace just the binary
@@ -307,6 +525,7 @@ pub fn install(staged: &Path) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
     }
+    let _ = std::fs::write(note_path(), note);
     // same path as before; on macOS that is the binary inside the new bundle
     std::process::Command::new(&exe).args(std::env::args_os().skip(1)).spawn().map_err(|e| format!("installed, but couldn't restart: {e} — start Jwala again"))?;
     Ok(())
@@ -365,6 +584,32 @@ mod tests {
         let s = latest();
         println!("running v{VERSION}: {s:?}");
         assert!(s.is_ok(), "{s:?}");
+    }
+
+    #[test]
+    fn plugin_bundle_is_replaced_while_its_binary_is_open() {
+        let root = std::env::temp_dir().join(format!("jwala-plugin-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (src, dst) = (root.join("new/Jwala.vst3"), root.join("installed/Jwala.vst3"));
+        for (d, body) in [(&src, "new"), (&dst, "old")] {
+            std::fs::create_dir_all(d.join("Contents/x86_64-win")).unwrap();
+            std::fs::write(d.join("Contents/x86_64-win/Jwala.vst3"), body).unwrap();
+        }
+        std::fs::write(src.join("Contents/moduleinfo.json"), "{}").unwrap();
+        let bin = dst.join("Contents/x86_64-win/Jwala.vst3");
+        // a host holding the old binary
+        let held = std::fs::File::open(&bin).unwrap();
+        replace_tree(&src, &dst).unwrap();
+        assert_eq!(std::fs::read_to_string(&bin).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(aside(&bin)).unwrap(), "old");
+        assert!(dst.join("Contents/moduleinfo.json").exists());
+        // a second update while the first old copy is still held uses the next free name
+        drop(held);
+        let held = std::fs::File::open(aside(&bin)).unwrap();
+        replace_tree(&src, &dst).unwrap();
+        assert_eq!(std::fs::read_to_string(&bin).unwrap(), "new");
+        drop(held);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -601,6 +601,9 @@ impl App {
             self.start_audio();
         }
         crate::standalone::update::cleanup();
+        if let Some(note) = crate::standalone::update::take_note() {
+            self.flash(note);
+        }
         if let Some(a) = &self.audio {
             if a.auto_update {
                 a.updater.check();
