@@ -1460,7 +1460,7 @@ fn update_row(app: &mut App, p: &mut Painter, r: Rect, y: f32) {
     let (on, status) = (a.auto_update, a.updater.status());
     let note = match &status {
         Status::Checking => "checking…".to_string(),
-        Status::Available(rel) | Status::Downloading(rel) | Status::Ready(rel, _) => format!("v{} available", rel.version),
+        Status::Available(rel) | Status::Downloading(rel) | Status::Ready(rel, ..) => format!("v{} available", rel.version),
         _ => a.update_note.clone(),
     };
     p.line(r.x + 24.0, y - 14.0, r.right() - 24.0, y - 14.0, 1.0, rgba(255, 255, 255, 18));
@@ -1495,7 +1495,7 @@ fn update_banner(app: &mut App, p: &mut Painter, w: f32) {
     let (text, buttons) = match a.updater.status() {
         Status::Available(rel) if rel.version != a.skipped_version && !a.update_dismissed => (format!("Jwala v{} is available", rel.version), true),
         Status::Downloading(rel) if !a.update_dismissed => (format!("Downloading Jwala v{}…", rel.version), false),
-        Status::Ready(rel, _) => (format!("Installing Jwala v{}…", rel.version), false),
+        Status::Ready(rel, ..) => (format!("Installing Jwala v{}…", rel.version), false),
         _ => return,
     };
     let bw = if buttons { 3.0 * 76.0 + 2.0 * 6.0 + 12.0 } else { 0.0 };

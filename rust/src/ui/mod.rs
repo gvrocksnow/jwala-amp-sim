@@ -649,12 +649,12 @@ impl App {
                     self.flash(format!("Update failed: {e}"));
                 }
             }
-            Status::Ready(_, dir) => {
+            Status::Ready(_, dir, note) => {
                 self.save_now();
                 if let Some(a) = self.audio.as_mut() {
                     a.host.stop();
                 }
-                match crate::standalone::update::install(&dir) {
+                match crate::standalone::update::install(&dir, &note) {
                     Ok(()) => std::process::exit(0),
                     Err(e) => {
                         self.flash(e);

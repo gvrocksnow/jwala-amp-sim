@@ -45,8 +45,9 @@ pub enum Status {
     UpToDate,
     Available(Release),
     Downloading(Release),
-    /// Downloaded, verified and unpacked into this folder; waiting for `install`.
-    Ready(Release, PathBuf),
+    /// Downloaded, verified and unpacked into this folder, plugins already updated (the note says
+    /// how that went); waiting for `install`.
+    Ready(Release, PathBuf, String),
     Failed(String),
 }
 
@@ -86,14 +87,19 @@ impl Updater {
         std::thread::spawn(move || me.set(latest().unwrap_or_else(Status::Failed)));
     }
 
-    /// Downloads and unpacks the release found by `check`, on a background thread.
+    /// Downloads and unpacks the release found by `check` and updates the installed plugins, on a
+    /// background thread. The plugin step may wait on a UAC prompt; `ShellExecuteExW` pumps
+    /// messages while it waits, which on the UI thread re-enters the window procedure and aborts.
     pub fn download(&self) {
         let Status::Available(rel) = self.status() else { return };
         self.set(Status::Downloading(rel.clone()));
         let me = self.clone();
         std::thread::spawn(move || {
             me.set(match stage(&rel) {
-                Ok(dir) => Status::Ready(rel, dir),
+                Ok(dir) => {
+                    let note = update_plugins(&dir, &rel.version);
+                    Status::Ready(rel, dir, note)
+                }
                 Err(e) => Status::Failed(e),
             })
         });
@@ -490,13 +496,10 @@ pub fn take_note() -> Option<String> {
 
 // ------------------------------------------------------------------ the app itself
 
-/// Swaps the unpacked build in for the running one (and updates installed plugins), then starts
-/// it. On `Ok` the caller must exit right away; on `Err` the running app is left as it was.
-pub fn install(staged: &Path) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // plugins first: they are read from `staged`, and the app's swap moves files out of it
+/// Updates the installed plugins from `staged` (asking for admin rights if needed) and returns the
+/// note the new version shows after the restart. Must not run on the UI thread (see `download`).
+fn update_plugins(staged: &Path, version: &str) -> String {
     let (done, problems) = install_plugins(staged, false);
-    let version = staged.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let mut note = format!("Updated to v{version}");
     if !done.is_empty() {
         note += &format!(" · plugins updated (restart your DAW): {}", done.join(", "));
@@ -504,6 +507,14 @@ pub fn install(staged: &Path) -> Result<(), String> {
     if let Some(p) = problems.first() {
         note += &format!(" · {p}");
     }
+    note
+}
+
+/// Swaps the unpacked build in for the running one, then starts it. The plugins were already
+/// updated by `download`. On `Ok` the caller must exit right away; on `Err` the running app is
+/// left as it was.
+pub fn install(staged: &Path, note: &str) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let target = install_target(&exe);
     let new = if target == exe && cfg!(target_os = "macos") {
         // a bare binary outside a bundle (a dev build): replace just the binary
