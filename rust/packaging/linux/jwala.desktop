@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Jwala
+GenericName=Guitar Amp Simulator
+Comment=Jwala amp & effects rig
+Exec=jwala
+Icon=jwala
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+Keywords=guitar;amp;amplifier;effects;
+StartupWMClass=Jwala

@@ -107,8 +107,13 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           dist=dist/Jwala-${{ matrix.name }}
-          mkdir -p "$dist"
-          cp target/release/jwala "$dist/Jwala"
+          # the standalone as an app bundle, so Finder and the Dock show its icon
+          app="$dist/Jwala.app/Contents"
+          mkdir -p "$app/MacOS" "$app/Resources"
+          cp target/release/jwala "$app/MacOS/jwala"
+          cp ../assets/appicon/Jwala.icns "$app/Resources/Jwala.icns"
+          sed "s/@VERSION@/$JWALA_VERSION/g" packaging/macos/Info.plist > "$app/Info.plist"
+          printf 'APPL????' > "$app/PkgInfo"
           for kind in vst3 clap; do
             bundle="$dist/Jwala.$kind/Contents"
             mkdir -p "$bundle/MacOS"
@@ -129,7 +134,7 @@ jobs:
             echo "BNDL????" > "$bundle/PkgInfo"
           done
           # ad-hoc signature so Apple Silicon hosts will load the bundles
-          codesign --force --deep --sign - "$dist/Jwala.vst3" "$dist/Jwala.clap" "$dist/Jwala"
+          codesign --force --deep --sign - "$dist/Jwala.vst3" "$dist/Jwala.clap" "$dist/Jwala.app"
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
@@ -139,6 +144,11 @@ jobs:
           cp target/release/jwala "$dist/Jwala"
           cp target/release/libjwala_plugin.so "$dist/Jwala.vst3/Contents/x86_64-linux/Jwala.so"
           cp target/release/libjwala_plugin.so "$dist/Jwala.clap"
+          # menu entry + icons, installed by install-linux.sh
+          cp packaging/linux/jwala.desktop packaging/linux/install-linux.sh "$dist/"
+          mkdir -p "$dist/icons"
+          for n in 16 24 32 48 64 128 256 512; do cp "../assets/appicon/jwala_$n.png" "$dist/icons/"; done
+          chmod +x "$dist/Jwala" "$dist/install-linux.sh"
 
       # GPLv3 requires the license text to ship with the binaries
       - name: Add license and readme

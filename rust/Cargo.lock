@@ -1121,6 +1121,7 @@ dependencies = [
  "image",
  "keyboard-types",
  "nih_plug",
+ "objc",
  "pollster 1.0.1",
  "raw-window-handle 0.5.2",
  "raw-window-handle 0.6.2",

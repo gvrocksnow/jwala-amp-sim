@@ -252,7 +252,7 @@ impl App {
         // before the (slow) GPU setup: the taskbar reads the icon once, when it first sees the window,
         // and doesn't refresh its button for a later WM_SETICON
         if shared.standalone.load(Ordering::Relaxed) {
-            set_window_icon(hwnd);
+            set_window_icon(window.raw_window_handle());
         }
         let phys =((size.0 as f32 * scale) as u32, (size.1 as f32 * scale) as u32);
         let target = gpu::target(window.raw_window_handle(), window.raw_display_handle());
@@ -1287,7 +1287,9 @@ fn renderer_failed(err: &str) {
 /// Gives the standalone's top-level window the app icon embedded by build.rs (resource id 1), for its
 /// title bar and taskbar button; nih-plug's window doesn't set one.
 #[cfg(windows)]
-fn set_window_icon(hwnd: isize) {
+fn set_window_icon(handle: RawWindowHandle) {
+    let RawWindowHandle::Win32(h) = handle else { return };
+    let hwnd = h.hwnd as isize;
     #[link(name = "user32")]
     extern "system" {
         fn GetAncestor(hwnd: isize, flags: u32) -> isize;
@@ -1358,5 +1360,104 @@ unsafe fn refresh_taskbar_button(top: isize) {
     release(list);
 }
 
-#[cfg(not(windows))]
-fn set_window_icon(_hwnd: isize) {}
+/// Gives the standalone the app icon in the Dock and the app switcher. A packaged `Jwala.app` already
+/// shows `Jwala.icns` (see `rust/packaging/macos`); this also covers running the bare binary.
+#[cfg(target_os = "macos")]
+fn set_window_icon(_handle: RawWindowHandle) {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    const PNG: &[u8] = include_bytes!("../../../assets/appicon/jwala_512.png");
+    unsafe {
+        let data: *mut Object = msg_send![class!(NSData), dataWithBytes: PNG.as_ptr() length: PNG.len()];
+        if data.is_null() {
+            return;
+        }
+        let image: *mut Object = msg_send![class!(NSImage), alloc];
+        let image: *mut Object = msg_send![image, initWithData: data];
+        if image.is_null() {
+            return;
+        }
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, setApplicationIconImage: image];
+        let _: () = msg_send![image, release];
+    }
+}
+
+/// Gives the standalone's top-level X11 window the app icon (`_NET_WM_ICON`, for the title bar,
+/// taskbar and Alt+Tab) and a `WM_CLASS` of `jwala`/`Jwala`, so desktops that match windows to
+/// `.desktop` files (GNOME) pick up the installed `jwala.desktop` icon. nih-plug's window sets neither.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn set_window_icon(handle: RawWindowHandle) {
+    use std::ffi::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void};
+    #[link(name = "X11")]
+    extern "C" {
+        fn XOpenDisplay(name: *const c_char) -> *mut c_void;
+        fn XCloseDisplay(dpy: *mut c_void) -> c_int;
+        fn XInternAtom(dpy: *mut c_void, name: *const c_char, only_if_exists: c_int) -> c_ulong;
+        fn XQueryTree(dpy: *mut c_void, w: c_ulong, root: *mut c_ulong, parent: *mut c_ulong, children: *mut *mut c_ulong, n: *mut c_uint) -> c_int;
+        fn XFree(data: *mut c_void) -> c_int;
+        fn XChangeProperty(dpy: *mut c_void, w: c_ulong, property: c_ulong, kind: c_ulong, format: c_int, mode: c_int, data: *const c_uchar, n: c_int) -> c_int;
+        fn XFlush(dpy: *mut c_void) -> c_int;
+    }
+    const XA_CARDINAL: c_ulong = 6;
+    const XA_STRING: c_ulong = 31;
+    const XA_WM_CLASS: c_ulong = 67;
+    const PROP_MODE_REPLACE: c_int = 0;
+    const PNGS: [&[u8]; 6] = [
+        include_bytes!("../../../assets/appicon/jwala_16.png"),
+        include_bytes!("../../../assets/appicon/jwala_32.png"),
+        include_bytes!("../../../assets/appicon/jwala_48.png"),
+        include_bytes!("../../../assets/appicon/jwala_64.png"),
+        include_bytes!("../../../assets/appicon/jwala_128.png"),
+        include_bytes!("../../../assets/appicon/jwala_256.png"),
+    ];
+
+    let view: c_ulong = match handle {
+        RawWindowHandle::Xlib(h) => h.window,
+        RawWindowHandle::Xcb(h) => h.window as c_ulong,
+        _ => return,
+    };
+    if view == 0 {
+        return;
+    }
+    // _NET_WM_ICON: for each size, width, height, then ARGB pixels; format-32 data is passed to Xlib
+    // as C longs, whatever their width
+    let mut icon: Vec<c_ulong> = Vec::new();
+    for png in PNGS {
+        let Ok(img) = image::load_from_memory(png) else { continue };
+        let img = img.to_rgba8();
+        icon.extend([img.width() as c_ulong, img.height() as c_ulong]);
+        icon.extend(img.pixels().map(|p| {
+            let [r, g, b, a] = p.0;
+            ((a as c_ulong) << 24) | ((r as c_ulong) << 16) | ((g as c_ulong) << 8) | b as c_ulong
+        }));
+    }
+    let class = b"jwala\0Jwala\0";
+    unsafe {
+        // our own connection: baseview's is busy on its event thread
+        let dpy = XOpenDisplay(std::ptr::null());
+        if dpy.is_null() {
+            return;
+        }
+        // our view is a child of the standalone's top-level window (which a window manager may
+        // already have reparented into its frame, so don't walk further up than that)
+        let (mut root, mut parent, mut children, mut n) = (0, 0, std::ptr::null_mut(), 0);
+        if XQueryTree(dpy, view, &mut root, &mut parent, &mut children, &mut n) != 0 {
+            if !children.is_null() {
+                XFree(children as *mut c_void);
+            }
+            if parent != 0 && parent != root {
+                let net_wm_icon = XInternAtom(dpy, c"_NET_WM_ICON".as_ptr(), 0);
+                if !icon.is_empty() {
+                    XChangeProperty(dpy, parent, net_wm_icon, XA_CARDINAL, 32, PROP_MODE_REPLACE, icon.as_ptr() as *const c_uchar, icon.len() as c_int);
+                }
+                XChangeProperty(dpy, parent, XA_WM_CLASS, XA_STRING, 8, PROP_MODE_REPLACE, class.as_ptr(), class.len() as c_int);
+                XFlush(dpy);
+            }
+        }
+        XCloseDisplay(dpy);
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn set_window_icon(_handle: RawWindowHandle) {}

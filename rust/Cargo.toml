@@ -34,6 +34,10 @@ serde_json = "1"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 
+# the Dock icon when the standalone runs outside a .app bundle (same version baseview uses)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
 [build-dependencies]
 winresource = "0.1"
 

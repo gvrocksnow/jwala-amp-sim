@@ -107,7 +107,7 @@ Shows the note, a cents needle, a strobe and the nearest standard-tuning string.
 
 ## Getting started (standalone)
 
-1. Run `Jwala.exe`. Audio starts automatically with your last device: ASIO if available, otherwise WASAPI. The status at the top right says why if it can't start.
+1. Run `Jwala.exe` (macOS: `Jwala.app`, which you can drag to Applications; Linux: `Jwala`, or run `./install-linux.sh` once to add it to your app menu with its icon). Audio starts automatically with your last device: ASIO if available, otherwise WASAPI. The status at the top right says why if it can't start.
 2. Open **⚙ Settings** to choose the driver, the input/output device and the input channel. For ASIO, buffer size and sample rate come from the driver's control panel, which you can open from Settings.
 3. No guitar handy? Choose **DI file** in Settings to loop a dry recording (`.wav`) through the rig.
 
@@ -135,7 +135,7 @@ The macOS build is a universal binary (Apple Silicon and Intel) but isn't signed
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Jwala.vst3 ~/Library/Audio/Plug-Ins/CLAP/Jwala.clap
 ```
 
-For the standalone, run `xattr -dr com.apple.quarantine` on the unzipped `Jwala` too, or right-click it and choose **Open** once.
+For the standalone, run `xattr -dr com.apple.quarantine` on the unzipped `Jwala.app` too, or right-click it and choose **Open** once.
 
 ## Building from source
 
@@ -146,7 +146,7 @@ cd rust
 cargo build --release
 ```
 
-On Windows, `rust\build.ps1` builds and packages everything into `rust\dist\` (`Jwala.exe`, `Jwala.vst3`, `Jwala.clap`). On Linux, install the ALSA/JACK and X11/Vulkan development packages first (see [`.github/workflows/build.yml`](.github/workflows/build.yml) for the exact list). The **Build** GitHub Actions workflow produces Windows, macOS and Linux packages.
+On Windows, `rust\build.ps1` builds and packages everything into `rust\dist\` (`Jwala.exe`, `Jwala.vst3`, `Jwala.clap`). On macOS and Linux, `bash rust/build.sh` packages the standalone with its app icon: `Jwala.app` on macOS, or the binary plus `install-linux.sh`, a `.desktop` entry and icons on Linux. The app icons in `assets/appicon/` are rebuilt from `icons/fire_icon_square_v2.svg` with `python tools/make_app_icons.py`. On Linux, install the ALSA/JACK and X11/Vulkan development packages first (see [`.github/workflows/build.yml`](.github/workflows/build.yml) for the exact list). The **Build** GitHub Actions workflow produces Windows, macOS and Linux packages.
 
 > **Note:** The Windows build should work but still may have bugs. The macOS and Linux builds compile, but have not been tested.
 
