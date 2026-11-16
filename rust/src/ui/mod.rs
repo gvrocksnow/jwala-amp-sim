@@ -129,6 +129,12 @@ pub enum Hit {
     ChooseDi,
     ApplyAudio,
     CloseSettings,
+    /// Standalone only: self-update (settings page row and the "new version" banner).
+    ToggleAutoUpdate,
+    CheckUpdate,
+    InstallUpdate,
+    SkipUpdate,
+    LaterUpdate,
 }
 
 /// A cycling selector on the audio settings page.
@@ -150,6 +156,19 @@ pub struct Audio {
     pub devices: crate::standalone::Devices,
     pub asio_inputs: Vec<String>,
     pub error: Option<String>,
+    pub updater: crate::standalone::update::Updater,
+    /// Check GitHub for a newer release at launch.
+    pub auto_update: bool,
+    /// A release the user chose to skip: the launch check doesn't offer it again.
+    pub skipped_version: String,
+    /// The banner was closed with "later" for this run.
+    pub update_dismissed: bool,
+    /// The running check was started by "check now", so its result is reported even if nothing is new.
+    pub update_manual: bool,
+    /// `updater.generation()` last acted on.
+    pub update_gen: u32,
+    /// The last check's outcome, shown in the settings page's update row ("up to date", "check failed").
+    pub update_note: String,
 }
 
 enum Drag {
@@ -563,9 +582,89 @@ impl App {
         self.dirty = false;
         // power is on by default: start audio with the last device
         let settings = saved.audio.unwrap_or_else(crate::standalone::AudioSettings::first_run);
-        self.audio = Some(Audio { host: Default::default(), settings, pending: None, devices: Default::default(), asio_inputs: Vec::new(), error: None });
+        self.audio = Some(Audio {
+            host: Default::default(),
+            settings,
+            pending: None,
+            devices: Default::default(),
+            asio_inputs: Vec::new(),
+            error: None,
+            updater: Default::default(),
+            auto_update: saved.auto_update,
+            skipped_version: saved.skipped_version,
+            update_dismissed: false,
+            update_manual: false,
+            update_gen: 0,
+            update_note: String::new(),
+        });
         if !crate::NO_AUDIO.load(Ordering::Relaxed) {
             self.start_audio();
+        }
+        crate::standalone::update::cleanup();
+        if let Some(a) = &self.audio {
+            if a.auto_update {
+                a.updater.check();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ self-update (standalone)
+
+    fn check_update(&mut self) {
+        let Some(a) = self.audio.as_mut() else { return };
+        a.update_manual = true;
+        a.update_dismissed = false;
+        a.updater.check();
+    }
+
+    /// Reacts to the update threads' results; called every frame.
+    fn poll_update(&mut self) {
+        use crate::standalone::update::Status;
+        let Some(a) = self.audio.as_mut() else { return };
+        let gen = a.updater.generation();
+        if gen == a.update_gen {
+            return;
+        }
+        a.update_gen = gen;
+        self.force_redraw = true;
+        let manual = a.update_manual;
+        match a.updater.status() {
+            Status::UpToDate => {
+                a.update_note = "up to date".into();
+                if manual {
+                    a.update_manual = false;
+                    self.flash(format!("Jwala v{} is up to date", crate::standalone::update::VERSION));
+                }
+            }
+            Status::Checking => a.update_note.clear(),
+            Status::Failed(e) => {
+                // a failed background check at launch stays quiet; anything the user asked for is reported
+                a.update_note = "check failed".into();
+                a.update_manual = false;
+                a.updater.reset();
+                if manual {
+                    self.flash(format!("Update failed: {e}"));
+                }
+            }
+            Status::Ready(_, dir) => {
+                self.save_now();
+                if let Some(a) = self.audio.as_mut() {
+                    a.host.stop();
+                }
+                match crate::standalone::update::install(&dir) {
+                    Ok(()) => std::process::exit(0),
+                    Err(e) => {
+                        self.flash(e);
+                        if let Some(a) = self.audio.as_mut() {
+                            a.updater.reset();
+                        }
+                        if !crate::NO_AUDIO.load(Ordering::Relaxed) {
+                            self.start_audio();
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -670,6 +769,8 @@ impl App {
             ir_path: ir,
             page: self.page,
             audio: self.audio.as_ref().map(|a| a.settings.clone()),
+            auto_update: self.audio.as_ref().is_some_and(|a| a.auto_update),
+            skipped_version: self.audio.as_ref().map(|a| a.skipped_version.clone()).unwrap_or_default(),
         });
     }
 
@@ -830,6 +931,36 @@ impl App {
                     a.pending = None;
                 }
             }
+            Hit::ToggleAutoUpdate => {
+                if let Some(a) = self.audio.as_mut() {
+                    a.auto_update = !a.auto_update;
+                    // turning it on checks right away rather than waiting for the next launch
+                    if a.auto_update {
+                        a.updater.check();
+                    }
+                }
+                self.save_at = Some(Instant::now());
+            }
+            Hit::CheckUpdate => self.check_update(),
+            Hit::InstallUpdate => {
+                if let Some(a) = self.audio.as_mut() {
+                    a.update_manual = true;
+                    a.updater.download();
+                }
+            }
+            Hit::SkipUpdate => {
+                if let Some(a) = self.audio.as_mut() {
+                    if let crate::standalone::update::Status::Available(rel) = a.updater.status() {
+                        a.skipped_version = rel.version;
+                    }
+                }
+                self.save_at = Some(Instant::now());
+            }
+            Hit::LaterUpdate => {
+                if let Some(a) = self.audio.as_mut() {
+                    a.update_dismissed = true;
+                }
+            }
             Hit::Resize => {
                 let size = self.params.persisted.read().unwrap().editor_size;
                 self.drag = Some(Drag::Resize { start: (x, y), size });
@@ -980,6 +1111,7 @@ impl App {
         if self.save_at.is_some_and(|t| Instant::now() >= t) {
             self.save_now();
         }
+        self.poll_update();
         if self.message.as_ref().is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(4)) {
             self.message = None;
         }
@@ -1181,6 +1313,10 @@ struct UiState {
     page: usize,
     #[serde(default)]
     audio: Option<crate::standalone::AudioSettings>,
+    #[serde(default)]
+    auto_update: bool,
+    #[serde(default)]
+    skipped_version: String,
 }
 
 fn ui_state_path() -> std::path::PathBuf {
@@ -1205,7 +1341,7 @@ fn load_ui_state() -> UiState {
     std::fs::read_to_string(presets::app_dir().join("settings.json"))
         .ok()
         .and_then(|t| serde_json::from_str::<CsSettings>(&t).ok())
-        .map(|c| UiState { state: c.state, preset: c.preset.unwrap_or_default(), ir_path: c.ir_file.unwrap_or_default(), page: c.page.unwrap_or(0), audio: None })
+        .map(|c| UiState { state: c.state, preset: c.preset.unwrap_or_default(), ir_path: c.ir_file.unwrap_or_default(), page: c.page.unwrap_or(0), ..Default::default() })
         .unwrap_or_default()
 }
 

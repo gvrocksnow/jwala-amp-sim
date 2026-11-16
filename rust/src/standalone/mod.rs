@@ -3,6 +3,7 @@
 //! silent dummy backend); audio runs here, through the same `Engine` the plugin uses.
 
 pub mod asio;
+pub mod update;
 
 use crate::params::TubeParams;
 use crate::plugin::{Engine, Shared};

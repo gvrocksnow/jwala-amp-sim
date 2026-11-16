@@ -41,6 +41,7 @@ pub fn draw(app: &mut App, p: &mut Painter, dt: f64) {
         p.rrect_stroke(r, 8.0, 1.0, with_alpha(ACCENT, 140));
         p.text_in(Font::Semibold, 9.5, &msg, r, 0.5, 0.5, TEXT);
     }
+    update_banner(app, p, w);
     preset_menu(app, p);
     dialog(app, p, w, h);
     audio_settings(app, p, w, h);
@@ -1372,7 +1373,7 @@ fn audio_settings(app: &mut App, p: &mut Painter, w: f32, h: f32) {
 
     p.fill(Rect::new(0.0, 0.0, w, h), rgba(0, 0, 0, 150));
     app.hits.push((Rect::new(0.0, 0.0, w, h), Hit::Block));
-    let r = Rect::centered(w / 2.0, h / 2.0, 600.0, 430.0);
+    let r = Rect::centered(w / 2.0, h / 2.0, 600.0, 474.0);
     p.rrect(Rect::new(r.x + 6.0, r.y + 10.0, r.w, r.h), 12.0, rgba(0, 0, 0, 120));
     p.grad(r, 12.0, rgb(33, 33, 36), rgb(18, 18, 21));
     p.rrect_stroke(r, 12.0, 1.0, with_alpha(ACCENT, 140));
@@ -1439,6 +1440,8 @@ fn audio_settings(app: &mut App, p: &mut Painter, w: f32, h: f32) {
         }
     }
 
+    update_row(app, p, r, r.bottom() - 170.0);
+
     // hint, wrapped over two lines at a word boundary
     let hr = Rect::new(r.x + 24.0, r.bottom() - 122.0, r.w - 48.0, 34.0);
     let (a1, a2) = wrap2(hint, hr.w);
@@ -1448,6 +1451,68 @@ fn audio_settings(app: &mut App, p: &mut Painter, w: f32, h: f32) {
     p.text_fit(Font::Semibold, 8.5, &status, Rect::new(r.x + 24.0, r.bottom() - 82.0, r.w - 48.0, 20.0), 0.0, col);
     button(app, p, Rect::new(r.right() - 24.0 - 150.0, r.bottom() - 52.0, 150.0, 34.0), "APPLY & START", Hit::ApplyAudio, true, 9.0);
     button(app, p, Rect::new(r.right() - 24.0 - 270.0, r.bottom() - 52.0, 110.0, 34.0), "CANCEL", Hit::CloseSettings, false, 9.0);
+}
+
+/// "UPDATES  [AUTO-UPDATE ON] [CHECK NOW]" on the settings page.
+fn update_row(app: &mut App, p: &mut Painter, r: Rect, y: f32) {
+    use crate::standalone::update::{Status, VERSION};
+    let Some(a) = &app.audio else { return };
+    let (on, status) = (a.auto_update, a.updater.status());
+    let note = match &status {
+        Status::Checking => "checking…".to_string(),
+        Status::Available(rel) | Status::Downloading(rel) | Status::Ready(rel, _) => format!("v{} available", rel.version),
+        _ => a.update_note.clone(),
+    };
+    p.line(r.x + 24.0, y - 14.0, r.right() - 24.0, y - 14.0, 1.0, rgba(255, 255, 255, 18));
+    p.text_in(Font::Bold, 8.0, "UPDATES", Rect::new(r.x + 24.0, y, 150.0, 18.0), 0.0, 0.5, DIM);
+    let sub = if note.is_empty() { format!("this is v{VERSION}") } else { format!("v{VERSION} · {note}") };
+    let col = if note == "check failed" { rgb(230, 120, 90) } else if note == "up to date" { rgb(120, 220, 140) } else { DIM };
+    p.text_fit(Font::Regular, 8.0, &sub, Rect::new(r.x + 24.0, y + 16.0, 140.0, 16.0), 0.0, col);
+    let x0 = r.x + 170.0;
+    let bw = (r.right() - 24.0 - x0 - 8.0) / 2.0;
+    button(app, p, Rect::new(x0, y, bw, 32.0), if on { "AUTO-UPDATE: ON" } else { "AUTO-UPDATE: OFF" }, Hit::ToggleAutoUpdate, on, 8.5);
+    let (label, hit) = match &status {
+        Status::Checking => ("CHECKING…".to_string(), Hit::Block),
+        Status::Downloading(rel) => (format!("DOWNLOADING v{}…", rel.version), Hit::Block),
+        Status::Ready(..) => ("INSTALLING…".to_string(), Hit::Block),
+        Status::Available(rel) => (format!("INSTALL v{}", rel.version), Hit::InstallUpdate),
+        _ => ("CHECK NOW".to_string(), Hit::CheckUpdate),
+    };
+    let br = Rect::new(x0 + bw + 8.0, y, bw, 32.0);
+    button(app, p, br, &label, hit, matches!(status, Status::Available(_)), 8.5);
+    if hit == Hit::Block {
+        p.rrect(br, 5.0, rgba(20, 18, 16, 120)); // busy
+    }
+}
+
+/// "Jwala vX is available  [INSTALL] [SKIP] [LATER]" under the header (standalone only).
+fn update_banner(app: &mut App, p: &mut Painter, w: f32) {
+    use crate::standalone::update::Status;
+    let Some(a) = &app.audio else { return };
+    if a.pending.is_some() {
+        return; // the settings page has its own update row
+    }
+    let (text, buttons) = match a.updater.status() {
+        Status::Available(rel) if rel.version != a.skipped_version && !a.update_dismissed => (format!("Jwala v{} is available", rel.version), true),
+        Status::Downloading(rel) if !a.update_dismissed => (format!("Downloading Jwala v{}…", rel.version), false),
+        Status::Ready(rel, _) => (format!("Installing Jwala v{}…", rel.version), false),
+        _ => return,
+    };
+    let bw = if buttons { 3.0 * 76.0 + 2.0 * 6.0 + 12.0 } else { 0.0 };
+    let tw = text::measure(Font::Semibold, 9.5, &text) + 36.0;
+    let r = Rect::new(((w - tw - bw) / 2.0).round(), HEADER + 10.0, tw + bw, 40.0);
+    p.rrect(Rect::new(r.x + 3.0, r.y + 5.0, r.w, r.h), 8.0, rgba(0, 0, 0, 110));
+    p.rrect(r, 8.0, rgba(24, 24, 27, 245));
+    p.rrect_stroke(r, 8.0, 1.0, with_alpha(ACCENT, 170));
+    app.hits.push((r, Hit::Block));
+    p.text_in(Font::Semibold, 9.5, &text, Rect::new(r.x + 18.0, r.y, tw - 18.0, r.h), 0.0, 0.5, TEXT);
+    if buttons {
+        let mut x = r.x + tw;
+        for (label, hit, primary) in [("INSTALL", Hit::InstallUpdate, true), ("SKIP", Hit::SkipUpdate, false), ("LATER", Hit::LaterUpdate, false)] {
+            button(app, p, Rect::new(x, r.y + 6.0, 76.0, 28.0), label, hit, primary, 8.0);
+            x += 82.0;
+        }
+    }
 }
 
 fn a_driver_is(app: &App, d: crate::standalone::Driver, asio: &str) -> bool {
