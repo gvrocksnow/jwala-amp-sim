@@ -13,7 +13,7 @@
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <TieredPGO>true</TieredPGO>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <Product>Jwala Amp Sim</Product>
   </PropertyGroup>
 
