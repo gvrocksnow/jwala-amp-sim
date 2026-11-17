@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Windows.Forms;
 using Jwala.Dsp;
 
@@ -189,7 +190,31 @@ sealed class FaderWidget : Widget
 
     float ThumbY => y1 - P.Value * (y1 - y0);
     public override RectangleF HitRect => new(cx - sw / 2, y0 - ThumbH / 2 - 2, sw, y1 - y0 + ThumbH + 4);
-    public override RectangleF Dirty => RectangleF.Inflate(Bounds, 4, 4);
+    // the cap's shadow reaches well right of and below the widget
+    public override RectangleF Dirty => RectangleF.FromLTRB(Bounds.Left - 4, Bounds.Top - 4, Bounds.Right + sw * 0.5f, Bounds.Bottom + 30);
+
+    /// <summary>eq_thumb.png: height / width.</summary>
+    const float CapAspect = 94f / 192f;
+    static readonly Dictionary<int, (Bitmap, int, int, int)> shadows = new();
+
+    /// <summary>The cap's soft shadow (the pedal pages' three light terms, light from the upper left), rendered once per
+    /// cap size into a sprite with <c>pad</c> pixels round the cap, so it can follow the thumb.</summary>
+    static (Bitmap img, int pad, int iw, int ih) Shadow(float tw)
+    {
+        int iw = (int)MathF.Round(tw + 4), ih = (int)MathF.Round(iw * CapAspect);
+        if (shadows.TryGetValue(iw, out var s)) return s;
+        float cw = tw;
+        int pad = (int)MathF.Ceiling(cw * 1.4f);
+        var bmp = new Bitmap(iw + 2 * pad, ih + 2 * pad, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+            SoftShadows.Cast(g, bmp.Size, og => og.DrawImage(Assets.Image("eq_thumb.png"), pad, pad, iw, ih), null, new[]
+            {
+                new SoftShadows.Term(cw * 0.05f, cw * 0.025f, cw * 0.04f, 0.75f),
+                new SoftShadows.Term(cw * 0.2f, cw * 0.1f, cw * 0.12f, 0.6f),
+                new SoftShadows.Term(cw * 0.4f, cw * 0.2f, cw * 0.3f, 0.4f),
+            }, down: 1);
+        return shadows[iw] = (bmp, pad, iw, ih);
+    }
 
     public override void Paint(Graphics g, bool hot, bool pressed)
     {
@@ -199,17 +224,26 @@ sealed class FaderWidget : Widget
             using var fill = Gfx.Round(new RectangleF(cx - 2, Math.Min(ym, yt), 4, Math.Abs(yt - ym)), 2);
             using var b = new SolidBrush(Color.FromArgb(200, Glow)); g.FillPath(b, fill);
         }
+        // chrome cap (eq_thumb.png, from concepts/fader_td_F_2.png) over its soft shadow, as in the Rust version
         float tw = Math.Clamp(sw * 0.6f, 26, 46);
-        var thumb = new RectangleF(cx - tw / 2, yt - ThumbH / 2, tw, ThumbH);
-        using (var sh = Gfx.Round(new RectangleF(thumb.X + 2, thumb.Y + 4, tw, ThumbH), 4))
-        using (var sb = new SolidBrush(Color.FromArgb(130, 0, 0, 0))) g.FillPath(sb, sh);
-        using (var tp = Gfx.Round(thumb, 4))
+        var (shadow, pad, iw, ih) = Shadow(tw);
+        var cap = new RectangleF(cx - iw / 2f, yt - ih / 2f, iw, ih);
+        g.DrawImage(shadow, (int)MathF.Round(cap.X) - pad, (int)MathF.Round(cap.Y) - pad);
+        var capImg = Assets.Image("eq_thumb.png");
+        var im = g.InterpolationMode;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        var dst = new Rectangle((int)MathF.Round(cap.X), (int)MathF.Round(cap.Y), iw, ih);
+        if (on()) g.DrawImage(capImg, dst);
+        else
         {
-            using (var grad = new LinearGradientBrush(RectangleF.Inflate(thumb, 0, 1), Color.FromArgb(214, 208, 196), Color.FromArgb(108, 102, 94), 90f)) g.FillPath(grad, tp);
-            using var pen = new Pen(hot || pressed ? Gfx.Accent : Color.FromArgb(160, 0, 0, 0), 1); g.DrawPath(pen, tp);
+            using var ia = new ImageAttributes();   // dimmed while bypassed
+            ia.SetColorMatrix(new ColorMatrix { Matrix00 = 0.6f, Matrix11 = 0.6f, Matrix22 = 0.6f });
+            g.DrawImage(capImg, dst, 0, 0, capImg.Width, capImg.Height, GraphicsUnit.Pixel, ia);
         }
-        using (var grip = new SolidBrush(on() ? Color.FromArgb(32, 32, 35) : Color.FromArgb(66, 66, 69)))
-            g.FillRectangle(grip, thumb.X + 4, thumb.Y + ThumbH / 2 - 1, tw - 8, 2);
+        g.InterpolationMode = im;
+        if (hot || pressed)
+            using (var ul = Gfx.Round(new RectangleF(cx - tw / 2 + 6, cap.Bottom + 1, tw - 12, 2), 1))
+            using (var ub = new SolidBrush(Gfx.Accent)) g.FillPath(ub, ul);
         using var f = new Font("Segoe UI", 7.5f, FontStyle.Bold);
         using var tb = new SolidBrush(hot || pressed ? Gfx.Accent : Gfx.Text);
         Gfx.DrawText(g, P.Display, f, tb, new RectangleF(cx - sw / 2, vy, sw, 14));

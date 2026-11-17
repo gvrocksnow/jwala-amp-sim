@@ -1030,6 +1030,8 @@ const EQ_VALUE_Y: f32 = 0.462;
 const EQ_NAME_Y: f32 = 0.925;
 /// Height of an EQ slider's thumb.
 pub const FADER_THUMB_H: f32 = 20.0;
+/// Height / width of eq_thumb.png.
+const EQ_THUMB_ASPECT: f32 = 94.0 / 192.0;
 /// The response display spans ±this many dB.
 const EQ_VIEW_DB: f32 = 18.0;
 
@@ -1054,6 +1056,7 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
     let px = |f: f32| unit.x + f * uw;
     let py = |f: f32| unit.y + f * uh;
     let panel_t = app.tex("eq_panel.png");
+    let thumb_t = app.tex("eq_thumb.png");
     let u = uw / 1.6;
     p.shadow(
         4,
@@ -1124,6 +1127,7 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
         p.text_in(Font::ArialBold, 6.5, &lbl, Rect::new(left - 46.0, y - 6.0, 38.0, 12.0), 1.0, 0.5, DIM);
     }
     let fader_hot = |app: &App, k: Knob| hot(app, Hit::Fader(k)) || pressed(app, Hit::Fader(k));
+    let mut caps: Vec<(Rect, f32, bool)> = Vec::with_capacity(spec::EQ_KNOBS.len());
     for i in 0..spec::EQ_KNOBS.len() {
         let k = Knob::Eq(i);
         let level = i == spec::EQ_BANDS;
@@ -1150,11 +1154,9 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
         // the thumb
         let tw = (sw * 0.6).clamp(26.0, 46.0);
         let th = FADER_THUMB_H;
-        let thumb = Rect::centered(cx, yt, tw, th);
-        p.rrect(Rect::new(thumb.x + 2.0, thumb.y + 4.0, tw, th), 4.0, rgba(0, 0, 0, 130));
-        p.grad(thumb, 4.0, rgb(214, 208, 196), rgb(108, 102, 94));
-        p.rrect_stroke(thumb, 4.0, 1.0, if fader_hot(app, k) { ACCENT } else { rgba(0, 0, 0, 160) });
-        p.fill(Rect::new(thumb.x + 4.0, thumb.cy() - 1.0, tw - 8.0, 2.0), if on { rgb(32, 32, 35) } else { rgb(66, 66, 69) });
+        // chrome cap (eq_thumb.png, from concepts/fader_td_F_2.png): drawn after the loop, over its soft shadow
+        let iw = tw + 4.0;
+        caps.push((Rect::centered(cx, yt, iw, iw * EQ_THUMB_ASPECT), tw, fader_hot(app, k)));
         // value above the slot, name below
         let val = (spec::EQ_KNOBS[i].fmt)(v);
         p.text_in(Font::Bold, 7.5, &val, Rect::new(cx - sw / 2.0, vy, sw, 14.0), 0.5, 0.5, if fader_hot(app, k) { ACCENT } else { TEXT });
@@ -1162,6 +1164,33 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
         p.text_in(Font::ArialBold, 7.0, &name, Rect::new(cx - sw / 2.0, ny, sw, 12.0), 0.5, 0.5, if level { ACCENT } else { DIM });
         app.hits.push((Rect::new(cx - sw / 2.0, y0 - th / 2.0 - 2.0, sw, y1 - y0 + th + 4.0), Hit::Fader(k)));
         app.fader_tracks.push((k, Rect::new(cx - 1.0, y0, 2.0, y1 - y0)));
+    }
+
+    // GPU soft shadows like the pedal pages (light from the upper left), re-rendered when a fader moves
+    let cw = caps.first().map_or(40.0, |c| c.1);
+    let key = caps.iter().fold(layout_key(r, 50), |h, c| h.rotate_left(7) ^ (c.0.y * 4.0) as u64);
+    let occ = caps.iter().map(|c| c.0).collect::<Vec<_>>();
+    p.shadow(
+        6,
+        key,
+        [
+            ShadowTerm { dx: cw * 0.05, dy: cw * 0.025, blur: cw * 0.04, strength: 0.75 },
+            ShadowTerm { dx: cw * 0.2, dy: cw * 0.1, blur: cw * 0.12, strength: 0.6 },
+            ShadowTerm { dx: cw * 0.4, dy: cw * 0.2, blur: cw * 0.3, strength: 0.4 },
+        ],
+        |op| {
+            for c in &occ {
+                op.image(thumb_t, *c);
+            }
+        },
+        None,
+    );
+    let s = if on { 1.0 } else { 0.6 };
+    for (cap, tw, is_hot) in caps {
+        p.image_tinted(thumb_t, cap, [s, s, s, 1.0]);
+        if is_hot {
+            p.rrect(Rect::new(cap.cx() - tw / 2.0 + 6.0, cap.bottom() + 1.0, tw - 12.0, 2.0), 1.0, ACCENT);
+        }
     }
 }
 
