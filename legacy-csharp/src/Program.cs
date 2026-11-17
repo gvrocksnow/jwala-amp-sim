@@ -20,7 +20,11 @@ static class Program
         if (args.Length >= 1 && args[0] == "--tunertest") return TunerTest();
         if (args.Length >= 1 && args[0] == "--selftest") return SelfTest(args.Length > 1 ? args[1] : null);
         // --no-audio: dev aid, starts without opening a device (and leaves the saved settings alone)
-        Application.Run(new MainForm(autoStart: !(args.Length >= 1 && args[0] == "--no-audio")));
+        // the splash covers loading; the main window stays invisible until it has drawn
+        UI.Splash.Show();
+        var form = new MainForm(autoStart: !(args.Length >= 1 && args[0] == "--no-audio"));
+        UI.Splash.HideUntilReady(form);
+        Application.Run(form);
         return 0;
     }
 

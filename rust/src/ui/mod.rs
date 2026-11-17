@@ -243,6 +243,8 @@ pub struct App {
     pub audio: Option<Audio>,
     /// Redraw on the next frame tick regardless of `last_sig` (input, resize).
     force_redraw: bool,
+    /// The standalone window has been uncloaked after the first frame.
+    revealed: bool,
     /// The window's DPI scale (physical / logical pixels).
     dpi: f32,
     last_sig: u64,
@@ -315,6 +317,7 @@ impl App {
             audio: None,
             resize_requested: None,
             force_redraw: true,
+            revealed: false,
             dpi: scale,
             last_sig: 0,
             last_meters: 0,
@@ -1213,6 +1216,12 @@ impl WindowHandler for App {
         self.poll_picker();
         self.follow_size(window);
         self.frame();
+        // the standalone's window stays cloaked until its first frame is up (see reveal.rs)
+        if !self.revealed && crate::UI_READY.load(Ordering::Relaxed) {
+            self.revealed = true;
+            self.force_redraw = true;
+            crate::reveal::reveal();
+        }
     }
 
     fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
@@ -1409,6 +1418,7 @@ fn parent_client_size(_hwnd: isize) -> Option<(u32, u32)> {
 /// blank but the app (or the host) keeps running.
 fn renderer_failed(err: &str) {
     eprintln!("Jwala: no renderer available: {err}");
+    crate::UI_READY.store(true, std::sync::atomic::Ordering::Relaxed);
     #[cfg(windows)]
     {
         #[link(name = "user32")]

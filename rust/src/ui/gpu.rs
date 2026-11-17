@@ -617,5 +617,6 @@ impl Renderer {
         }
         self.queue.submit([enc.finish()]);
         self.queue.present(frame);
+        crate::UI_READY.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
