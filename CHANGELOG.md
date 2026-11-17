@@ -2,6 +2,25 @@
 
 All notable changes to Jwala are recorded here, newest first.
 
+## [0.3.2] - 2026-11-18
+
+### Added
+- **Startup splash screen:** the standalone shows the fire splash while it loads, then reveals the main window only once it has drawn, so there's no blank or half-painted window at launch. Native on Windows (Rust and C#), macOS (an `NSWindow`) and Linux (an X11 window).
+
+### Changed
+- **Tuner page:** new LED dot-matrix display behind a glass screen, on a plain black background. The layout is unchanged (Rust and C#).
+- **Knobs:** new chrome knob graphics for the amp and the cab.
+- **EQ faders:** chrome fader caps with soft drop shadows, replacing the flat drawn thumbs (Rust and C#).
+
+### Fixed
+- **Text on macOS and Linux:** the UI now loads the closest system equivalents of the Windows fonts (picking faces inside macOS `.ttc` collections), so labels no longer go missing off Windows.
+- **Updater:** installed VST3/CLAP plugins are now updated on the background download thread instead of during install. Waiting on the admin (UAC) prompt from the UI thread could abort the app.
+- **EQ page (C#):** turning EQ ON/OFF now repaints every fader cap and slot glow, not just the switch.
+
+### Version
+- Bumped to 0.3.2 in `rust/Cargo.toml` and `legacy-csharp/src/Jwala.csproj`.
+
+
 ## [0.3.1] - 2026-11-16
 
 ### Added
