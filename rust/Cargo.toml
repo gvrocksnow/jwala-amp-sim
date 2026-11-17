@@ -22,6 +22,9 @@ wgpu = "30"
 pollster = "1"
 bytemuck = { version = "1", features = ["derive"] }
 fontdue = "0.9"
+# picking faces by PostScript name inside macOS .ttc collections (src/fonts.rs); fontdue's own parser,
+# same version and features, so nothing extra is built
+ttf-parser = { version = "0.25", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rfd = "0.17"
 cpal = "0.15"
@@ -43,6 +46,13 @@ winreg = "0.55"
 # the Dock icon when the standalone runs outside a .app bundle (same version baseview uses)
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+# the startup splash's NSWindow (src/splash/macos.rs); the version baseview uses
+cocoa = "0.24"
+
+# the startup splash's X11 window and hiding the main window until it has drawn (src/splash/linux.rs,
+# src/reveal.rs); the version baseview uses
+[target.'cfg(target_os = "linux")'.dependencies]
+x11 = { version = "2.21", features = ["xlib"] }
 
 [build-dependencies]
 winresource = "0.1"

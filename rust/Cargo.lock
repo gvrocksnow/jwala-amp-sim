@@ -1329,6 +1329,7 @@ dependencies = [
  "atomic_float",
  "baseview",
  "bytemuck",
+ "cocoa",
  "cpal",
  "fontdue",
  "hound",
@@ -1344,10 +1345,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "ttf-parser",
  "ureq",
  "wgpu",
  "winreg",
  "winresource",
+ "x11",
  "zip",
 ]
 

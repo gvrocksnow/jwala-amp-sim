@@ -1,11 +1,13 @@
 //! Jwala: amp & effects rig as a VST3/CLAP plugin and standalone app.
 
 pub mod dsp;
+mod fonts;
 pub mod params;
 pub mod plugin;
 pub mod presets;
 pub mod render;
 pub mod reveal;
+pub mod splash;
 pub mod spec;
 pub mod standalone;
 mod ui;

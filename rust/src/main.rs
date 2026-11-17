@@ -7,9 +7,6 @@
 use std::sync::atomic::Ordering;
 
 #[cfg(windows)]
-mod splash;
-
-#[cfg(windows)]
 mod win {
     #[link(name = "user32")]
     extern "system" {
@@ -71,8 +68,7 @@ fn main() {
         }
     }
     // after the DPI awareness, so the splash is drawn at the monitor's real resolution
-    #[cfg(windows)]
-    splash::show();
+    jwala_plugin::splash::show();
     // nih-plug opens the main window on this thread: keep it invisible until the UI has drawn
     jwala_plugin::reveal::hide_next_main_window();
 

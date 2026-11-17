@@ -273,6 +273,8 @@ impl App {
         // before the (slow) GPU setup: the taskbar reads the icon once, when it first sees the window,
         // and doesn't refresh its button for a later WM_SETICON
         if shared.standalone.load(Ordering::Relaxed) {
+            // keep the window invisible until the first frame (the splash covers the load)
+            crate::reveal::hide_window(window.raw_window_handle());
             set_window_icon(window.raw_window_handle());
         }
         let phys =((size.0 as f32 * scale) as u32, (size.1 as f32 * scale) as u32);
@@ -1216,7 +1218,8 @@ impl WindowHandler for App {
         self.poll_picker();
         self.follow_size(window);
         self.frame();
-        // the standalone's window stays cloaked until its first frame is up (see reveal.rs)
+        crate::splash::editor_frame();
+        // the standalone's window stays hidden until its first frame is up (see reveal.rs)
         if !self.revealed && crate::UI_READY.load(Ordering::Relaxed) {
             self.revealed = true;
             self.force_redraw = true;

@@ -1,23 +1,12 @@
-//! Startup splash for the standalone (Windows): a small borderless card with the Jwala logo and the
-//! version, shown while the editor decodes its assets and starts the GPU. It runs on its own thread
-//! and fades out once the editor presents its first frame (`jwala_plugin::UI_READY`), or after a
-//! timeout so it can never linger.
+//! Windows: the card in a layered (per-pixel alpha) popup on its own thread, topmost and never
+//! activated, so it neither steals focus from nor hides behind the window that is loading.
 
 use std::ffi::c_void;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-const LOGO: &[u8] = include_bytes!("../../assets/appicon/jwala_512.png");
+use super::{compose, FADE_IN, FADE_OUT, TIMEOUT};
 
-/// Card size and margin for its shadow, in logical px.
-const CARD_W: f32 = 300.0;
-const CARD_H: f32 = 280.0;
-const RADIUS: f32 = 18.0;
-const SHADOW: f32 = 22.0;
-const LOGO_SIZE: f32 = 132.0;
-const TIMEOUT: Duration = Duration::from_secs(20);
-const FADE_IN: f32 = 0.12;
-const FADE_OUT: f32 = 0.22;
 
 #[repr(C)]
 struct Point {
@@ -132,12 +121,18 @@ pub fn show() {
     std::thread::spawn(|| {
         // a splash that fails to draw is never worth breaking startup over
         let _ = std::panic::catch_unwind(run);
+        // normally a no-op (the editor already revealed its window); after the timeout, or if the
+        // splash couldn't be shown, it makes sure a slow start still shows the app
+        crate::reveal::reveal();
     });
 }
 
 fn run() {
     let scale = unsafe { GetDpiForSystem() } as f32 / 96.0;
-    let Some((w, h, pixels)) = compose(scale) else { return };
+    let Some(card) = compose(scale, true) else { return };
+    let (w, h) = (card.w as i32, card.h as i32);
+    let mut pixels = Vec::new();
+    card.bgra(1.0, &mut pixels);
 
     unsafe {
         let inst = GetModuleHandleW(std::ptr::null());
@@ -228,7 +223,7 @@ fn run() {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-            if closing.is_none() && (jwala_plugin::UI_READY.load(Ordering::Relaxed) || start.elapsed() > TIMEOUT) {
+            if closing.is_none() && (crate::UI_READY.load(Ordering::Relaxed) || start.elapsed() > TIMEOUT) {
                 closing = Some(Instant::now());
             }
             let fade_in = (start.elapsed().as_secs_f32() / FADE_IN).min(1.0);
@@ -246,142 +241,10 @@ fn run() {
             std::thread::sleep(Duration::from_millis(15));
         }
 
-        // normally a no-op (the editor already revealed its window); after the timeout it makes sure a
-        // slow or stuck start still shows the app rather than leaving it invisible
-        jwala_plugin::reveal::reveal();
-
         SelectObject(mem, old);
         DeleteObject(dib);
         DeleteDC(mem);
         ReleaseDC(0, screen);
         DestroyWindow(hwnd);
     }
-}
-
-// ---------------------------------------------------------------------------------------------
-// drawing: everything is composed in software into premultiplied RGBA floats, then packed to BGRA
-
-struct Canvas {
-    w: usize,
-    h: usize,
-    px: Vec<[f32; 4]>,
-}
-
-impl Canvas {
-    /// Blends a straight-alpha colour over pixel (x, y) with the given coverage.
-    fn blend(&mut self, x: usize, y: usize, rgb: [f32; 3], a: f32) {
-        if x >= self.w || y >= self.h || a <= 0.0 {
-            return;
-        }
-        let p = &mut self.px[y * self.w + x];
-        let k = 1.0 - a;
-        p[0] = rgb[0] * a + p[0] * k;
-        p[1] = rgb[1] * a + p[1] * k;
-        p[2] = rgb[2] * a + p[2] * k;
-        p[3] = a + p[3] * k;
-    }
-}
-
-/// Signed distance from (px, py) to a rounded rectangle centred at (cx, cy) (negative inside).
-fn rrect_sdf(px: f32, py: f32, cx: f32, cy: f32, hw: f32, hh: f32, r: f32) -> f32 {
-    let qx = (px - cx).abs() - (hw - r);
-    let qy = (py - cy).abs() - (hh - r);
-    let ox = qx.max(0.0);
-    let oy = qy.max(0.0);
-    (ox * ox + oy * oy).sqrt() + qx.max(qy).min(0.0) - r
-}
-
-fn rgb(hex: u32) -> [f32; 3] {
-    [((hex >> 16) & 255) as f32 / 255.0, ((hex >> 8) & 255) as f32 / 255.0, (hex & 255) as f32 / 255.0]
-}
-
-fn load_font(file: &str) -> Option<fontdue::Font> {
-    let dir = std::env::var_os("WINDIR").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into()).join("Fonts");
-    let bytes = std::fs::read(dir.join(file)).ok()?;
-    fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
-}
-
-/// Draws `text` centred horizontally on `cx` with its baseline at `baseline` (physical px).
-fn draw_text(c: &mut Canvas, font: &fontdue::Font, text: &str, px: f32, cx: f32, baseline: f32, color: [f32; 3], tracking: f32) {
-    let glyphs: Vec<_> = text.chars().map(|ch| font.rasterize(ch, px)).collect();
-    let width: f32 = glyphs.iter().map(|(m, _)| m.advance_width + tracking).sum::<f32>() - tracking;
-    let mut pen = (cx - width / 2.0).round();
-    for (m, bitmap) in &glyphs {
-        let gx = pen as i32 + m.xmin;
-        let gy = baseline as i32 - m.height as i32 - m.ymin;
-        for row in 0..m.height {
-            for col in 0..m.width {
-                let cov = bitmap[row * m.width + col] as f32 / 255.0;
-                let (x, y) = (gx + col as i32, gy + row as i32);
-                if x >= 0 && y >= 0 {
-                    c.blend(x as usize, y as usize, color, cov);
-                }
-            }
-        }
-        pen += m.advance_width + tracking;
-    }
-}
-
-/// The splash card at `scale`: (width, height, premultiplied BGRA bytes).
-fn compose(scale: f32) -> Option<(i32, i32, Vec<u8>)> {
-    let s = |v: f32| v * scale;
-    let (w, h) = ((s(CARD_W + 2.0 * SHADOW)).round() as usize, (s(CARD_H + 2.0 * SHADOW)).round() as usize);
-    let mut c = Canvas { w, h, px: vec![[0.0; 4]; w * h] };
-    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
-    let (hw, hh, r) = (s(CARD_W) / 2.0, s(CARD_H) / 2.0, s(RADIUS));
-    let card_top = cy - hh;
-
-    let (top, bottom, edge) = (rgb(0x222226), rgb(0x0f0f11), rgb(0xffffff));
-    for y in 0..h {
-        for x in 0..w {
-            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-            // soft drop shadow, offset slightly down
-            let d_shadow = rrect_sdf(fx, fy - s(5.0), cx, cy, hw, hh, r);
-            let shadow = 0.45 * (1.0 - (d_shadow / s(SHADOW)).clamp(0.0, 1.0)).powi(2);
-            c.blend(x, y, [0.0; 3], shadow);
-            // the card: a dark vertical gradient
-            let d = rrect_sdf(fx, fy, cx, cy, hw, hh, r);
-            let cover = (0.5 - d).clamp(0.0, 1.0);
-            if cover > 0.0 {
-                let t = ((fy - card_top) / (2.0 * hh)).clamp(0.0, 1.0);
-                let col = [0, 1, 2].map(|i| top[i] + (bottom[i] - top[i]) * t);
-                c.blend(x, y, col, cover);
-                // a faint 1px rim
-                let rim = (1.0 - (d + s(1.0)).abs() / s(1.0)).clamp(0.0, 1.0);
-                c.blend(x, y, edge, 0.07 * rim);
-            }
-        }
-    }
-
-    // the logo
-    let logo = image::load_from_memory(LOGO).ok()?.to_rgba8();
-    let size = s(LOGO_SIZE).round() as u32;
-    let logo = image::imageops::resize(&logo, size, size, image::imageops::FilterType::Lanczos3);
-    let lx = (cx - size as f32 / 2.0).round() as usize;
-    let ly = (card_top + s(34.0)).round() as usize;
-    // the icon is an opaque black square: clip it to the rounded white frame drawn inside it
-    let (half, inset) = (size as f32 / 2.0, size as f32 * 0.044);
-    for (x, y, p) in logo.enumerate_pixels() {
-        let d = rrect_sdf(x as f32 + 0.5, y as f32 + 0.5, half, half, half - inset, half - inset, size as f32 * 0.085);
-        let a = p[3] as f32 / 255.0 * (0.5 - d).clamp(0.0, 1.0);
-        c.blend(lx + x as usize, ly + y as usize, [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0], a);
-    }
-
-    // name and version
-    let below = card_top + s(34.0) + size as f32;
-    if let Some(font) = load_font("segoescb.ttf").or_else(|| load_font("segoeuib.ttf")) {
-        draw_text(&mut c, &font, "Jwala", s(34.0), cx, below + s(48.0), rgb(0xf2f2f2), 0.0);
-    }
-    if let Some(font) = load_font("segoeui.ttf") {
-        let version = format!("v{}", env!("CARGO_PKG_VERSION"));
-        draw_text(&mut c, &font, &version, s(13.0), cx, below + s(78.0), rgb(0x8a8a90), s(1.0));
-    }
-
-    // pack premultiplied BGRA for UpdateLayeredWindow
-    let mut out = Vec::with_capacity(w * h * 4);
-    for p in &c.px {
-        let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-        out.extend([q(p[2]), q(p[1]), q(p[0]), q(p[3])]);
-    }
-    Some((w as i32, h as i32, out))
 }

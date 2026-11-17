@@ -1,7 +1,9 @@
-//! Text: the Windows fonts the C# UI used, rasterised with fontdue into a glyph atlas texture.
+//! Text: the Windows fonts the C# UI used (or their closest macOS / Linux equivalents, see
+//! `crate::fonts`), rasterised with fontdue into a glyph atlas texture.
 //! Sizes are in points like GDI+ (1 pt = 96/72 logical px); glyphs are rasterised at physical size.
 
-use fontdue::{Font as FdFont, FontSettings};
+use crate::fonts::Face;
+use fontdue::Font as FdFont;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -16,16 +18,14 @@ pub enum Font {
     ArialBold,
 }
 
-const FONT_FILES: [(Font, &str); 6] = [
-    (Font::Regular, "segoeui.ttf"),
-    (Font::Bold, "segoeuib.ttf"),
-    (Font::Semibold, "seguisb.ttf"),
-    (Font::Light, "segoeuil.ttf"),
-    (Font::Script, "segoescb.ttf"),
-    (Font::ArialBold, "arialbd.ttf"),
+const FACES: [(Font, Face); 6] = [
+    (Font::Regular, Face::Regular),
+    (Font::Bold, Face::Bold),
+    (Font::Semibold, Face::Semibold),
+    (Font::Light, Face::Light),
+    (Font::Script, Face::Script),
+    (Font::ArialBold, Face::ArialBold),
 ];
-/// Fallback for symbols (◀ ▶ ♩ ♭ ♯ ⚙ …).
-const SYMBOL_FILE: &str = "seguisym.ttf";
 
 pub struct Fonts {
     fonts: HashMap<Font, FdFont>,
@@ -34,31 +34,25 @@ pub struct Fonts {
 
 impl Fonts {
     fn load() -> Fonts {
-        let dir = std::env::var_os("WINDIR").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into()).join("Fonts");
-        let read = |f: &str| std::fs::read(dir.join(f)).ok().and_then(|b| FdFont::from_bytes(b, FontSettings::default()).ok());
         let mut fonts = HashMap::new();
         // anything missing falls back to the regular face (or the first face found)
-        let mut fallback: Option<Vec<u8>> = None;
-        for (id, file) in FONT_FILES {
-            if let Some(bytes) = std::fs::read(dir.join(file)).ok() {
+        let mut fallback: Option<FdFont> = None;
+        for (id, face) in FACES {
+            if let Some(f) = crate::fonts::load(face) {
                 if fallback.is_none() {
-                    fallback = Some(bytes.clone());
+                    fallback = Some(f.clone());
                 }
-                if let Ok(f) = FdFont::from_bytes(bytes, FontSettings::default()) {
+                fonts.insert(id, f);
+            }
+        }
+        for (id, _) in FACES {
+            if !fonts.contains_key(&id) {
+                if let Some(f) = fallback.clone() {
                     fonts.insert(id, f);
                 }
             }
         }
-        for (id, _) in FONT_FILES {
-            if !fonts.contains_key(&id) {
-                if let Some(b) = fallback.clone() {
-                    if let Ok(f) = FdFont::from_bytes(b, FontSettings::default()) {
-                        fonts.insert(id, f);
-                    }
-                }
-            }
-        }
-        Fonts { fonts, symbol: read(SYMBOL_FILE) }
+        Fonts { fonts, symbol: crate::fonts::load(Face::Symbol) }
     }
 
     pub fn get() -> &'static Fonts {
