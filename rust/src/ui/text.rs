@@ -125,6 +125,72 @@ pub fn measure(font: Font, pt: f32, s: &str) -> f32 {
     advances(font, pt, s).iter().sum()
 }
 
+/// `s` rasterised `rows` cells tall (cap height) and thresholded, for LED dot-matrix readouts.
+pub struct DotMask {
+    pub w: usize,
+    pub h: usize,
+    /// Row of the baseline within the cropped mask (may lie below `h` for glyphs without descenders).
+    pub baseline: i32,
+    pub cells: Vec<bool>,
+}
+
+impl DotMask {
+    pub fn on(&self, x: usize, y: usize) -> bool {
+        self.cells[y * self.w + x]
+    }
+}
+
+pub fn dot_mask(font: Font, s: &str, rows: u32) -> DotMask {
+    let px = rows as f32 * 1.32;
+    let fonts = Fonts::get();
+    let m = line_metrics(font, px * 72.0 / 96.0);
+    let base = m.ascent.ceil() as i32 + 2;
+    let ch = (m.ascent - m.descent).ceil() as i32 + 4;
+    let adv = advances(font, px * 72.0 / 96.0, s);
+    let cw = adv.iter().sum::<f32>().ceil() as i32 + 8;
+    let mut canvas = vec![0u8; (cw * ch).max(1) as usize];
+    let mut pen = 2.0f32;
+    for (c, a) in s.chars().zip(adv) {
+        if let Some((f, _)) = fonts.face(font, c) {
+            let (gm, bmp) = f.rasterize(c, px);
+            let (ox, oy) = (pen.round() as i32 + gm.xmin, base - gm.ymin - gm.height as i32);
+            for y in 0..gm.height as i32 {
+                for x in 0..gm.width as i32 {
+                    let (tx, ty) = (ox + x, oy + y);
+                    if tx >= 0 && ty >= 0 && tx < cw && ty < ch {
+                        let d = &mut canvas[(ty * cw + tx) as usize];
+                        *d = (*d).max(bmp[(y * gm.width as i32 + x) as usize]);
+                    }
+                }
+            }
+        }
+        pen += a;
+    }
+    let lit = |x: i32, y: i32| canvas[(y * cw + x) as usize] > 110;
+    let (mut x0, mut y0, mut x1, mut y1) = (cw, ch, -1, -1);
+    for y in 0..ch {
+        for x in 0..cw {
+            if lit(x, y) {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    if x1 < 0 {
+        return DotMask { w: 0, h: 0, baseline: 0, cells: Vec::new() };
+    }
+    let (w, h) = ((x1 - x0 + 1) as usize, (y1 - y0 + 1) as usize);
+    let mut cells = Vec::with_capacity(w * h);
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            cells.push(lit(x, y));
+        }
+    }
+    DotMask { w, h, baseline: base - y0, cells }
+}
+
 // ------------------------------------------------------------------ atlas
 
 pub const ATLAS: u32 = 2048;

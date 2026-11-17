@@ -281,17 +281,19 @@ sealed class SwitchWidget : Widget
 {
     public string Text; public Func<bool> Get; public Action Click; public Color LedColor = Color.FromArgb(255, 170, 40);
     public float FontSize = 7.5f;
+    /// <summary>Scales the LED, padding and corners (the tuner scales with the window).</summary>
+    public float Scale = 1;
     public override void Paint(Graphics g, bool hot, bool pressed)
     {
-        var r = Bounds; bool on = Get();
-        using var path = Gfx.Round(r, 5);
+        var r = Bounds; bool on = Get(); float k = Scale;
+        using var path = Gfx.Round(r, 5 * k);
         using (var bg = new LinearGradientBrush(r, on ? Color.FromArgb(59, 59, 62) : hot ? Color.FromArgb(42, 42, 45) : Color.FromArgb(31, 31, 34), Color.FromArgb(10, 10, 13), 90f))
             g.FillPath(bg, path);
         using (var pen = new Pen(on ? Color.FromArgb(120, LedColor) : Color.FromArgb(140, 0, 0, 0), 1.2f)) g.DrawPath(pen, path);
-        Gfx.Led(g, new RectangleF(r.X + 8, r.Y + r.Height / 2 - 3.5f, 7, 7), on, LedColor);
+        Gfx.Led(g, new RectangleF(r.X + 8 * k, r.Y + r.Height / 2 - 3.5f * k, 7 * k, 7 * k), on, LedColor);
         using var f = new Font("Arial", FontSize, FontStyle.Bold);
         using var tb = new SolidBrush(on ? Color.FromArgb(245, 235, 210) : Gfx.Dim);
-        g.DrawString(Text, f, tb, new RectangleF(r.X + 16, r.Y, r.Width - 18, r.Height), Gfx.CenterNoWrap);
+        g.DrawString(Text, f, tb, new RectangleF(r.X + 16 * k, r.Y, r.Width - 18 * k, r.Height), Gfx.CenterNoWrap);
     }
     public override void Down(MouseEventArgs e, WidgetSurface s) { Click(); s.Changed(this); }
 }

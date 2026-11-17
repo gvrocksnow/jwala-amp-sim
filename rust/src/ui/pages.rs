@@ -85,12 +85,18 @@ fn button(app: &mut App, p: &mut Painter, r: Rect, label: &str, hit: Hit, active
 
 /// Latching switch with an LED (channel buttons, cab on…).
 fn switch(app: &mut App, p: &mut Painter, r: Rect, label: &str, hit: Hit, on: bool, led_c: Color) {
+    switch_scaled(app, p, r, label, hit, on, led_c, 1.0);
+}
+
+/// `switch` with its LED, label and corners scaled by `s` (the tuner scales with the window).
+#[allow(clippy::too_many_arguments)]
+fn switch_scaled(app: &mut App, p: &mut Painter, r: Rect, label: &str, hit: Hit, on: bool, led_c: Color, s: f32) {
     let h = hot(app, hit);
     let top = if on { rgb(59, 59, 62) } else if h { rgb(42, 42, 45) } else { rgb(31, 31, 34) };
-    p.grad(r, 5.0, top, rgb(12, 10, 8));
-    p.rrect_stroke(r, 5.0, 1.2, if on { with_alpha(led_c, 120) } else { rgba(0, 0, 0, 140) });
-    led(p, Rect::new(r.x + 8.0, r.cy() - 3.5, 7.0, 7.0), on, led_c);
-    p.text_in(Font::ArialBold, 7.5, label, Rect::new(r.x + 16.0, r.y, r.w - 18.0, r.h), 0.5, 0.5, if on { rgb(245, 235, 210) } else { DIM });
+    p.grad(r, 5.0 * s, top, rgb(12, 10, 8));
+    p.rrect_stroke(r, 5.0 * s, 1.2, if on { with_alpha(led_c, 120) } else { rgba(0, 0, 0, 140) });
+    led(p, Rect::new(r.x + 8.0 * s, r.cy() - 3.5 * s, 7.0 * s, 7.0 * s), on, led_c);
+    p.text_in(Font::ArialBold, 7.5 * s, label, Rect::new(r.x + 16.0 * s, r.y, r.w - 18.0 * s, r.h), 0.5, 0.5, if on { rgb(245, 235, 210) } else { DIM });
     app.hits.push((r, hit));
 }
 
@@ -1198,55 +1204,145 @@ fn eq_page(app: &mut App, p: &mut Painter, r: Rect) {
 
 const STRINGS: [(&str, f64); 6] = [("E2", 40.0), ("A2", 45.0), ("D3", 50.0), ("G3", 55.0), ("B3", 59.0), ("E4", 64.0)];
 
+const LED_GREEN: Color = [80.0 / 255.0, 1.0, 130.0 / 255.0, 1.0];
+const LED_AMBER: Color = [1.0, 170.0 / 255.0, 40.0 / 255.0, 1.0];
+const LED_RED: Color = [1.0, 60.0 / 255.0, 50.0 / 255.0, 1.0];
+const LED_WHITE: Color = [235.0 / 255.0, 235.0 / 255.0, 225.0 / 255.0, 1.0];
+const LED_GHOST: Color = [1.0, 1.0, 1.0, 14.0 / 255.0];
+
+/// Meter colour for a cents offset.
+fn led_col(c: f64) -> Color {
+    let a = c.abs();
+    if a <= 5.0 {
+        LED_GREEN
+    } else if a <= 25.0 {
+        LED_AMBER
+    } else {
+        LED_RED
+    }
+}
+
+/// One LED dot, with a soft halo when lit.
+fn led_dot(p: &mut Painter, cx: f32, cy: f32, d: f32, col: Color, glow: bool) {
+    if glow {
+        p.glow(Rect::centered(cx, cy, d * 3.2, d * 3.2), with_alpha(col, 70), with_alpha(col, 0), 0.0);
+    }
+    p.ellipse(Rect::centered(cx, cy, d, d), col);
+}
+
+/// Width of `s` as an LED dot matrix `rows` cells tall, in cells × `pitch`.
+fn led_text_w(s: &str, rows: u32, pitch: f32) -> f32 {
+    text::dot_mask(Font::ArialBold, s, rows).w as f32 * pitch
+}
+
+/// Draws `s` as an LED dot matrix with its left edge at `x` and its baseline at `baseline` (px).
+/// `glow` adds a halo per lit dot.
+#[allow(clippy::too_many_arguments)]
+fn led_text(p: &mut Painter, s: &str, x: f32, baseline: f32, rows: u32, pitch: f32, col: Color, glow: bool, fine: bool) {
+    let m = text::dot_mask(Font::ArialBold, s, rows);
+    let top = baseline - m.baseline as f32 * pitch;
+    let glow = glow && col[3] > 0.5;
+    // the smallest dots are drawn a touch fuller so they don't fade out
+    let d = pitch * if fine { 0.9 } else { 0.85 };
+    for y in 0..m.h {
+        for xx in 0..m.w {
+            if m.on(xx, y) {
+                led_dot(p, x + (xx as f32 + 0.5) * pitch, top + (y as f32 + 0.5) * pitch, d, col, glow);
+            }
+        }
+    }
+}
+
+/// The tuner is laid out in a fixed design space (the cent meter spans x 0..900, the readout starts at y 0)
+/// and drawn scaled to fit the page, centred.
+struct TunerLayout {
+    ox: f32,
+    oy: f32,
+    s: f32,
+}
+
+impl TunerLayout {
+    // the block: glass bezel to the CLOSE button, in design units
+    const LEFT: f32 = -74.0;
+    const TOP: f32 = 38.0;
+    const W: f32 = 1048.0;
+    const H: f32 = 508.0;
+
+    fn new(r: Rect) -> TunerLayout {
+        // keep clear of the TUNER title at the top left
+        let (top_pad, side_pad, bottom_pad) = (70.0, 30.0, 20.0);
+        let s = ((r.w - 2.0 * side_pad) / Self::W).min((r.h - top_pad - bottom_pad) / Self::H).clamp(0.4, 2.5);
+        let ox = r.x + (r.w - Self::W * s) / 2.0 - Self::LEFT * s;
+        let oy = (r.y + (r.h - Self::H * s) / 2.0).max(r.y + top_pad) - Self::TOP * s;
+        TunerLayout { ox, oy, s }
+    }
+    fn x(&self, v: f32) -> f32 {
+        self.ox + v * self.s
+    }
+    fn y(&self, v: f32) -> f32 {
+        self.oy + v * self.s
+    }
+    fn r(&self, x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect::new(self.x(x), self.y(y), w * self.s, h * self.s)
+    }
+    /// Text in design units: `x`/`base` are the left edge and baseline, `pitch` the design dot spacing.
+    #[allow(clippy::too_many_arguments)]
+    fn led(&self, p: &mut Painter, s: &str, x: f32, base: f32, rows: u32, pitch: f32, col: Color) {
+        led_text(p, s, self.x(x), self.y(base), rows, pitch * self.s, col, pitch >= 2.5, pitch < 2.5);
+    }
+    /// `led` centred on `cx`.
+    #[allow(clippy::too_many_arguments)]
+    fn led_c(&self, p: &mut Painter, s: &str, cx: f32, base: f32, rows: u32, pitch: f32, col: Color) {
+        self.led(p, s, cx - led_text_w(s, rows, pitch) / 2.0, base, rows, pitch, col);
+    }
+}
+
 fn tuner(app: &mut App, p: &mut Painter, r: Rect, dt: f64) {
-    let (in_tune, off, far) = (rgb(90, 235, 120), rgb(255, 176, 60), rgb(240, 90, 70));
-    p.cover(app.tex("backdrop.jpg"), r);
-    p.fill(r, rgba(6, 5, 4, 205));
-    vignette(p, r, 200);
+    p.fill(r, rgb(9, 9, 9));
     p.text(Font::Bold, 15.0, "TUNER", 28.0, r.y + 18.0, with_alpha(ACCENT, 220));
     p.text(Font::Regular, 9.0, "Play a single string and let it ring.  T or Esc closes the tuner.", 31.0, r.y + 48.0, rgba(230, 220, 200, 160));
 
-    let w = (r.w - 80.0).min(900.0);
-    let cx = r.w / 2.0;
-    let readout = Rect::new(cx - w / 2.0, r.y + 30.0, w, 230.0);
-    let meter = Rect::new(cx - w / 2.0, readout.bottom() + 20.0, w, 70.0);
-    let strobe = Rect::new(cx - w / 2.0, meter.bottom() + 26.0, w, 34.0);
-    let dim = rgba(230, 220, 200, 160);
+    let l = TunerLayout::new(r);
+    let s = l.s;
+    let (mw, cx) = (900.0, 450.0);
+    let (my, strobe_y) = (254.0, 346.0);
 
-    // scale
-    for c in (-50..=50).step_by(5) {
-        let x = meter.x + (c + 50) as f32 / 100.0 * meter.w;
-        let h = if c % 25 == 0 { 22.0 } else if c % 10 == 0 { 15.0 } else { 9.0 };
-        p.line(x, meter.bottom() - 22.0, x, meter.bottom() - 22.0 - h, 1.5, rgba(230, 220, 200, 120));
-        if c % 25 == 0 {
-            let s = if c > 0 { format!("+{c}") } else { c.to_string() };
-            p.text_in(Font::Regular, 8.0, &s, Rect::new(x - 20.0, meter.bottom() - 18.0, 40.0, 16.0), 0.5, 0.5, dim);
-        }
+    // glossy glass screen behind the readout, meter and strobe
+    let screen = l.r(-68.0, 44.0, 1036.0, 356.0);
+    box_shadow(p, Rect::new(screen.x, screen.y + 8.0 * s, screen.w, screen.h), 16.0 * s, 120, 0.0, 6.0 * s);
+    for (k, c) in [rgb(30, 30, 33), rgb(150, 150, 155), rgb(70, 70, 74), rgb(20, 20, 22)].into_iter().enumerate() {
+        let i = k as f32 * 1.5 * s;
+        p.rrect_stroke(screen.inflate(6.0 * s - i, 6.0 * s - i), 16.0 * s - i, 2.0 * s, c);
     }
-    p.fill(Rect::new(meter.x + 0.47 * meter.w, meter.y, meter.w * 0.06, meter.h - 22.0), with_alpha(in_tune, 50));
-    p.text(Font::Bold, 22.0, "♭", meter.x - 44.0, meter.y + 4.0, dim);
-    p.text(Font::Bold, 22.0, "♯", meter.right() + 12.0, meter.y + 4.0, dim);
-    p.rrect(strobe, 6.0, rgb(16, 16, 19));
-    p.rrect_stroke(strobe, 6.0, 1.0, with_alpha(ACCENT, 80));
+    p.image_rounded(app.tex("tuner_glass.jpg"), screen, [0.0, 0.0, 1.0, 1.0], 12.0 * s);
 
     let sig = app.tuner.has_signal;
-    let (note, oct, cents) = if sig { app.tuner.describe(app.tuner.frequency) } else { ("–", 0, 0.0) };
+    let (note, oct, cents) = if sig { app.tuner.describe(app.tuner.frequency) } else { ("-", 0, 0.0) };
     let ac = cents.abs();
-    let col = if !sig { rgba(230, 220, 200, 90) } else if ac < 3.0 { in_tune } else if ac < 15.0 { off } else { far };
+    let col = if !sig { rgb(120, 120, 120) } else if ac < 3.0 { LED_GREEN } else if ac < 15.0 { LED_AMBER } else { LED_RED };
 
-    // note readout (120 px)
-    let note_pt = 120.0 * 72.0 / 96.0;
-    let nw = text::measure(Font::Bold, note_pt, note);
-    let nx = readout.cx() - nw / 2.0;
-    if sig && ac < 3.0 {
-        p.glow(Rect::new(readout.cx() - 170.0, readout.y - 10.0, 340.0, 200.0), with_alpha(in_tune, 60), with_alpha(in_tune, 0), 0.0);
-    }
-    p.text(Font::Bold, note_pt, note, nx, readout.y, col);
+    // note: big dot-matrix letter with the octave beside it
+    let nw = led_text_w(note, 30, 3.0);
+    let nx = cx - nw / 2.0;
     if sig {
-        p.text(Font::Bold, 34.0 * 72.0 / 96.0, &oct.to_string(), nx + nw - 4.0, readout.y + 100.0, col);
+        p.glow(l.r(cx - 130.0, 34.0, 260.0, 160.0), with_alpha(col, 34), with_alpha(col, 0), 0.0);
     }
-    let info = if sig { format!("{:.2} Hz      {}{:.1} ¢", app.tuner.frequency, if cents >= 0.0 { "+" } else { "" }, cents) } else { "Waiting for a note…".into() };
-    p.text_in(Font::Bold, 13.0, &info, Rect::new(readout.x, readout.bottom() - 50.0, readout.w, 30.0), 0.5, 0.5, TEXT);
+    l.led(p, note, nx, 156.0, 30, 3.0, col);
+    if sig {
+        l.led(p, &oct.to_string(), nx + nw + 8.0, 156.0, 16, 2.5, col);
+    }
+
+    // frequency and cents
+    if sig {
+        let hz = format!("{:.2} HZ", app.tuner.frequency);
+        let ct = format!("{}{:.1} ¢", if cents >= 0.0 { "+" } else { "" }, cents);
+        let (w1, w2) = (led_text_w(&hz, 12, 1.875), led_text_w(&ct, 12, 1.875));
+        let x0 = cx - (w1 + 30.0 + w2) / 2.0;
+        l.led(p, &hz, x0, 198.0, 12, 1.875, LED_WHITE);
+        l.led(p, &ct, x0 + w1 + 30.0, 198.0, 12, 1.875, col);
+    } else {
+        l.led_c(p, "WAITING FOR A NOTE", cx, 198.0, 12, 1.875, rgb(150, 150, 150));
+    }
 
     // nearest standard-tuning string
     let midi = if sig { 69.0 + 12.0 * (app.tuner.frequency / app.tuner.reference_a).log2() } else { -100.0 };
@@ -1258,48 +1354,70 @@ fn tuner(app: &mut App, p: &mut Painter, r: Rect, dt: f64) {
             nearest = Some(i);
         }
     }
-    let sw = 58.0;
-    let sx = readout.cx() - sw * STRINGS.len() as f32 / 2.0;
     for (i, (name, _)) in STRINGS.iter().enumerate() {
-        let b = Rect::new(sx + i as f32 * sw + 4.0, readout.bottom() - 12.0, sw - 8.0, 24.0);
+        let bx = cx - 174.0 + i as f32 * 58.0 + 4.0;
+        let b = l.r(bx, 208.0, 50.0, 24.0);
         let on = nearest == Some(i);
-        p.rrect(b, 5.0, if on { with_alpha(col, 80) } else { rgba(255, 255, 255, 30) });
-        p.text_in(Font::Bold, 9.5, name, b, 0.5, 0.5, if on { col } else { DIM });
+        if on {
+            p.glow(b.inflate(10.0 * s, 10.0 * s), with_alpha(col, 40), with_alpha(col, 0), 0.4);
+        }
+        p.rrect_stroke(b, 5.0 * s, 2.0 * s, if on { with_alpha(col, 230) } else { rgba(255, 255, 255, 40) });
+        l.led_c(p, name, bx + 25.0, 228.0, 11, 1.5, if on { col } else { rgb(150, 150, 150) });
     }
 
-    // needle eased toward the target
+    // cent meter: 41 LED bars; the needle lights one bar and the trail back to centre glows faintly
     let target = if sig { cents.clamp(-50.0, 50.0) } else { 0.0 };
     app.needle += (target - app.needle) * (1.0 - (-dt * 12.0).exp());
-    let nx2 = meter.x + ((app.needle + 50.0) / 100.0) as f32 * meter.w;
-    p.line(nx2, meter.y, nx2, meter.bottom() - 24.0, 4.0, if sig { col } else { rgba(230, 220, 200, 60) });
-    led(p, Rect::new(meter.x - 30.0, meter.y + 50.0, 10.0, 10.0), sig && cents < -3.0, off);
-    led(p, Rect::new(meter.right() + 20.0, meter.y + 50.0, 10.0, 10.0), sig && cents > 3.0, off);
+    for k in 0..41 {
+        let c = -50.0 + k as f64 * 2.5;
+        let x = k as f32 * (mw / 40.0);
+        let tall = if k % 10 == 0 { 44.0 } else if k == 20 { 36.0 } else { 30.0 };
+        let bar = l.r(x - 7.0, my + 44.0 - tall, 14.0, tall);
+        let n = app.needle;
+        let lit = sig && (c - n).abs() <= 1.3;
+        let trail = sig && ((c > 0.0 && c <= n) || (c < 0.0 && c >= n));
+        let sc = led_col(c);
+        if lit {
+            p.glow(bar.inflate(14.0 * s, 14.0 * s), with_alpha(sc, 90), with_alpha(sc, 0), 0.3);
+            p.rrect(bar, 3.0 * s, sc);
+        } else if k == 20 {
+            p.rrect(bar, 3.0 * s, with_alpha(LED_GREEN, 70));
+        } else if trail {
+            p.rrect(bar, 3.0 * s, with_alpha(sc, 85));
+        } else {
+            p.rrect(bar, 3.0 * s, rgba(255, 255, 255, 16));
+        }
+    }
+    for (c, lab) in [(-50.0, "-50"), (-25.0, "-25"), (0.0, "0"), (25.0, "+25"), (50.0, "+50")] {
+        l.led_c(p, lab, (c + 50.0) / 100.0 * mw, my + 68.0, 11, 1.5, rgb(170, 170, 165));
+    }
+    let grey = rgb(90, 90, 90);
+    l.led_c(p, "b", -46.0, my + 40.0, 19, 1.875, if sig && cents < -3.0 { LED_AMBER } else { grey });
+    l.led_c(p, "#", mw + 46.0, my + 40.0, 19, 1.875, if sig && cents > 3.0 { LED_AMBER } else { grey });
 
-    // strobe: stripes drift left when flat, right when sharp, stand still in tune
+    // strobe: two rows of LED dots; blocks drift left when flat, right when sharp, stand still in tune
     if sig {
         app.strobe_phase += cents * 2.2 * dt;
     }
-    let period = 28.0;
-    let mut o = (app.strobe_phase * period as f64 % period as f64) as f32;
-    if o < 0.0 {
-        o += period;
+    let shift = (app.strobe_phase * 2.0).floor() as i64;
+    for row in 0..2i64 {
+        for k in 0..=90i64 {
+            let on = sig && (k - shift + row * 3).rem_euclid(8) < 4;
+            led_dot(p, l.x(k as f32 * 10.0), l.y(strobe_y + 4.0 + row as f32 * 14.0), 7.0 * s, if on { with_alpha(col, 230) } else { LED_GHOST }, on);
+        }
     }
-    p.push_clip(strobe.inflate(-3.0, -3.0));
-    let mut x = strobe.x - period + o;
-    while x < strobe.right() {
-        p.fill(Rect::new(x, strobe.y + 4.0, period / 2.0, strobe.h - 8.0), if sig { with_alpha(col, 200) } else { rgba(230, 220, 200, 40) });
-        x += period;
-    }
-    p.pop_clip();
 
-    let by = strobe.bottom() + 80.0;
-    button(app, p, Rect::new(cx - 150.0, by, 34.0, 32.0), "◀", Hit::RefDown, false, 8.5);
+    // gloss: the glass sheen added back over the LEDs (tint alpha 0 = additive), so the light sits under the glass
+    p.image_rounded_tinted(app.tex("tuner_sheen.jpg"), screen, 12.0 * s, [1.0, 1.0, 1.0, 0.0]);
+
+    let by = 460.0;
+    button(app, p, l.r(cx - 150.0, by, 34.0, 32.0), "◀", Hit::RefDown, false, 8.5 * s);
     let ra = format!("A4 = {:.0} Hz", app.tuner.reference_a);
-    p.text_in(Font::Bold, 10.0, &ra, Rect::new(cx - 110.0, by, 160.0, 32.0), 0.5, 0.5, TEXT);
-    button(app, p, Rect::new(cx + 56.0, by, 34.0, 32.0), "▶", Hit::RefUp, false, 8.5);
+    p.text_in(Font::Bold, 10.0 * s, &ra, l.r(cx - 110.0, by, 160.0, 32.0), 0.5, 0.5, TEXT);
+    button(app, p, l.r(cx + 56.0, by, 34.0, 32.0), "▶", Hit::RefUp, false, 8.5 * s);
     let mute = app.shared.tuner.mute_output.load(Ordering::Relaxed);
-    switch(app, p, Rect::new(cx + 110.0, by + 2.0, 140.0, 28.0), "MUTE OUTPUT", Hit::TunerMute, mute, rgb(255, 80, 60));
-    button(app, p, Rect::new(cx - 60.0, by + 52.0, 120.0, 34.0), "CLOSE TUNER", Hit::TunerClose, false, 8.5);
+    switch_scaled(app, p, l.r(cx + 110.0, by + 2.0, 140.0, 28.0), "MUTE OUTPUT", Hit::TunerMute, mute, rgb(255, 80, 60), s);
+    button(app, p, l.r(cx - 60.0, by + 52.0, 120.0, 34.0), "CLOSE TUNER", Hit::TunerClose, false, 8.5 * s);
 }
 
 // ===================================================================== overlays

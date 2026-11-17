@@ -249,6 +249,13 @@ impl<'a> Painter<'a> {
         self.push(tex, i);
     }
 
+    /// Image clipped to a rounded rect and multiplied by `tint` (premultiplied; alpha 0 = additive).
+    pub fn image_rounded_tinted(&mut self, tex: TexId, r: Rect, radius: f32, tint: Color) {
+        let mut i = self.inst(r, K_IMAGE, tint);
+        i.p[1] = radius;
+        self.push(tex, i);
+    }
+
     /// Repeats `tex` at `scale` over `r`, clipped to a rounded rect.
     pub fn tile(&mut self, tex: TexId, r: Rect, scale: f32, radius: f32) {
         let (tw, th) = self.tex_sizes.get(tex.0).copied().unwrap_or((1, 1));
