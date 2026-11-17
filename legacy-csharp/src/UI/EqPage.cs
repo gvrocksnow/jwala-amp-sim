@@ -31,7 +31,12 @@ sealed class EqPage : WidgetSurface
     public EqPage(EqParams p)
     {
         this.p = p; BackColor = Slate;
-        ParamsChanged += _ => { if (curve != null) InvalidateArea(curve.Bounds); };   // the curve follows the sliders
+        ParamsChanged += w =>
+        {
+            if (curve != null) InvalidateArea(curve.Bounds);   // the curve follows the sliders
+            // EQ ON dims or lights every cap and slot glow, not just the switch
+            if (w is SwitchWidget) foreach (var f in W.OfType<FaderWidget>()) InvalidateArea(f.Dirty);
+        };
     }
 
     double Fs => Engine()?.SampleRate ?? 48000;
