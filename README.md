@@ -16,6 +16,7 @@ Jwala is a guitar amp simulator with a full signal chain: pedals, a tube amp, a 
 - **5 stereo effects:** doubler, chorus, phaser, tape echo and a shimmer reverb. Delay and reverb tails keep ringing when switched off.
 - **Chromatic tuner** with strobe and adjustable A4 reference.
 - **14 factory presets**, user presets, and the last state restored on launch.
+- **In-app updates:** the standalone finds new releases and updates itself and your installed plugins.
 - **Plugin parameters are host-automatable**, and the DSP runs at **4x oversampling** for the drive stages (8x on Lead II).
 - Builds for **Windows, macOS and Linux** (the macOS and Linux builds compile in CI but haven't been tested).
 
@@ -107,13 +108,19 @@ Shows the note, a cents needle, a strobe and the nearest standard-tuning string.
 
 ## Getting started (standalone)
 
-1. Run `Jwala.exe` (macOS: `Jwala.app`, which you can drag to Applications; Linux: `Jwala`, or run `./install-linux.sh` once to add it to your app menu with its icon). Audio starts automatically with your last device: ASIO if available, otherwise WASAPI. The status at the top right says why if it can't start.
+1. Run `Jwala.exe` (macOS: `Jwala.app`, which you can drag to Applications; Linux: `jwala`, or run `./install-linux.sh` once to add it to your app menu with its icon). A splash screen shows while it loads. Audio starts automatically with your last device: ASIO if available, otherwise WASAPI. The status at the top right says why if it can't start.
 2. Open **⚙ Settings** to choose the driver, the input/output device and the input channel. For ASIO, buffer size and sample rate come from the driver's control panel, which you can open from Settings.
 3. No guitar handy? Choose **DI file** in Settings to loop a dry recording (`.wav`) through the rig.
 
 If no usable GPU driver is found, the UI is drawn on the CPU instead and the status reads **CPU rendering (no GPU)**. Everything still works, but the window is drawn at 1x and scaled by Windows.
 
 Settings and the last state are saved in `%AppData%\Jwala\jwala-rs.json`.
+
+### Updates
+
+The standalone checks the [releases page](https://github.com/gvrocksnow/jwala-amp-sim/releases/latest) for a newer version. When it finds one, a banner under the header offers **INSTALL**, **SKIP** or **LATER**. The **UPDATES** row in **⚙ Settings** turns **AUTO-UPDATE** on or off and has a **CHECK NOW** button.
+
+The update is checked against the release's `.sha256` file before anything is replaced. Jwala then saves its state, swaps in the new build and restarts. Any VST3/CLAP plugins you've installed are updated too. If they're in a folder that needs admin rights, you'll get a one-time admin prompt. A DAW that already has the plugin loaded keeps the old version until you restart it.
 
 ## Plugin
 
