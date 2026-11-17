@@ -1254,7 +1254,7 @@ fn led_text(p: &mut Painter, s: &str, x: f32, baseline: f32, rows: u32, pitch: f
 }
 
 /// The tuner is laid out in a fixed design space (the cent meter spans x 0..900, the readout starts at y 0)
-/// and drawn scaled to fit the page, centred.
+/// and drawn at a fixed size, centred in the page.
 struct TunerLayout {
     ox: f32,
     oy: f32,
@@ -1271,7 +1271,8 @@ impl TunerLayout {
     fn new(r: Rect) -> TunerLayout {
         // keep clear of the TUNER title at the top left
         let (top_pad, side_pad, bottom_pad) = (70.0, 30.0, 20.0);
-        let s = ((r.w - 2.0 * side_pad) / Self::W).min((r.h - top_pad - bottom_pad) / Self::H).clamp(0.4, 2.5);
+        // fixed size, shrinking only if the page is ever too small to hold it
+        let s = ((r.w - 2.0 * side_pad) / Self::W).min((r.h - top_pad - bottom_pad) / Self::H).clamp(0.4, 1.0);
         let ox = r.x + (r.w - Self::W * s) / 2.0 - Self::LEFT * s;
         let oy = (r.y + (r.h - Self::H * s) / 2.0).max(r.y + top_pad) - Self::TOP * s;
         TunerLayout { ox, oy, s }

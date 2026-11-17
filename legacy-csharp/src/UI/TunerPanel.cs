@@ -10,8 +10,8 @@ namespace Jwala.UI;
 
 /// <summary>
 /// Full-page chromatic tuner on a glossy LED glass screen: dot-matrix note readout, LED cent meter and an LED strobe.
-/// Laid out in a fixed design space (the cent meter spans x 0..900, the readout starts at y 0) and drawn scaled to fit
-/// the page, centred. Mirrors the Rust UI's `tuner()`.
+/// Laid out in a fixed design space (the cent meter spans x 0..900, the readout starts at y 0) and drawn at a fixed
+/// size, centred in the page. Mirrors the Rust UI's `tuner()`.
 /// </summary>
 sealed class TunerPanel : WidgetSurface
 {
@@ -40,7 +40,8 @@ sealed class TunerPanel : WidgetSurface
     {
         // keep clear of the TUNER title at the top left
         const float topPad = 70, sidePad = 30, bottomPad = 20;
-        s = Math.Clamp(Math.Min((r.Width - 2 * sidePad) / BlockW, (r.Height - topPad - bottomPad) / BlockH), 0.4f, 2.5f);
+        // fixed size, shrinking only if the page is ever too small to hold it
+        s = Math.Clamp(Math.Min((r.Width - 2 * sidePad) / BlockW, (r.Height - topPad - bottomPad) / BlockH), 0.4f, 1f);
         ox = r.X + (r.Width - BlockW * s) / 2 - BlockLeft * s;
         oy = Math.Max(r.Y + (r.Height - BlockH * s) / 2, r.Y + topPad) - BlockTop * s;
         screen = R(-68, 44, 1036, 356);
