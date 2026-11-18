@@ -245,6 +245,8 @@ pub struct App {
     force_redraw: bool,
     /// The standalone window has been uncloaked after the first frame.
     revealed: bool,
+    /// When the editor was opened (caps how long the window stays hidden).
+    created: Instant,
     /// The window's DPI scale (physical / logical pixels).
     dpi: f32,
     last_sig: u64,
@@ -320,6 +322,7 @@ impl App {
             resize_requested: None,
             force_redraw: true,
             revealed: false,
+            created: Instant::now(),
             dpi: scale,
             last_sig: 0,
             last_meters: 0,
@@ -1166,7 +1169,11 @@ impl App {
         };
         if let Some(r) = self.renderer.as_mut() {
             r.shadow_keys = keys;
-            r.render(&layer, &jobs, &mut atlas);
+            // a frame the surface refused must be retried next tick, or (with no periodic refresh on
+            // the software renderer) the window stays blank, and hidden until the first frame
+            if !r.render(&layer, &jobs, &mut atlas) {
+                self.force_redraw = true;
+            }
         }
         self.atlas = atlas;
     }
@@ -1220,7 +1227,8 @@ impl WindowHandler for App {
         self.frame();
         crate::splash::editor_frame();
         // the standalone's window stays hidden until its first frame is up (see reveal.rs)
-        if !self.revealed && crate::UI_READY.load(Ordering::Relaxed) {
+        // never leave the window invisible: show it after a few seconds even if no frame made it
+        if !self.revealed && (crate::UI_READY.load(Ordering::Relaxed) || self.created.elapsed() > Duration::from_secs(3)) {
             self.revealed = true;
             self.force_redraw = true;
             crate::reveal::reveal();

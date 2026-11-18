@@ -517,7 +517,8 @@ impl Renderer {
     }
 
     /// Renders one frame: off-screen shadow jobs first, then the UI.
-    pub fn render(&mut self, layer: &Layer, jobs: &[ShadowJob], atlas: &mut Atlas) {
+    /// Returns false when no frame could be presented (the surface wasn't ready); the caller retries.
+    pub fn render(&mut self, layer: &Layer, jobs: &[ShadowJob], atlas: &mut Atlas) -> bool {
         if atlas.dirty {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo { texture: &self.glyph_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
@@ -548,9 +549,13 @@ impl Renderer {
 
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            _ => {
+            other => {
+                static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    eprintln!("Jwala: surface not ready ({other:?}), retrying");
+                }
                 self.surface.configure(&self.device, &self.config);
-                return;
+                return false;
             }
         };
         let view = frame.texture.create_view(&Default::default());
@@ -625,5 +630,6 @@ impl Renderer {
         self.queue.submit([enc.finish()]);
         self.queue.present(frame);
         crate::UI_READY.store(true, std::sync::atomic::Ordering::Relaxed);
+        true
     }
 }
