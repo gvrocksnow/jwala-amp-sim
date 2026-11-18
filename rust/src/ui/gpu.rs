@@ -175,7 +175,14 @@ impl Renderer {
         // up, 2.25x fewer pixels to shade at 150%
         let software = software || info.device_type == wgpu::DeviceType::Cpu;
         let (phys, scale) = if software { (((phys.0 as f32 / scale).round() as u32, (phys.1 as f32 / scale).round() as u32), 1.0) } else { (phys, scale) };
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("jwala"), ..Default::default() })).map_err(|e| e.to_string())?;
+        // ask for exactly what the adapter has: the WebGPU defaults (8 color attachments, ...) are more
+        // than some VM / software drivers offer (VMware SVGA, virgl report 2), and the UI needs far less
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("jwala"),
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
+        .map_err(|e| e.to_string())?;
         // wgpu panics on uncaptured errors by default; inside a host that would take the DAW down
         device.on_uncaptured_error(std::sync::Arc::new(|e| eprintln!("Jwala GPU error: {e}")));
 
