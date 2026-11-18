@@ -67,3 +67,8 @@ codegen-units = 1
 
 [profile.dev]
 opt-level = 1
+
+# baseview with one change: X11 windows use the parent's visual instead of 32-bit ARGB (see
+# vendor/baseview/src/x11/visual_info.rs). Same revision nih-plug and we already pin.
+[patch."https://github.com/RustAudio/baseview.git"]
+baseview = { path = "vendor/baseview" }
