@@ -205,6 +205,11 @@ impl Renderer {
             color_space: Default::default(),
         };
         surface.configure(&device, &config);
+        // one line for bug reports: which adapter, and how the window surface is set up
+        eprintln!(
+            "Jwala: renderer {} ({:?}, {:?}), {:?}, alpha {:?} of {:?}, {}x{} px",
+            info.name, info.backend, info.device_type, config.format, config.alpha_mode, caps.alpha_modes, config.width, config.height
+        );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("ui"), source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()) });
 
@@ -631,7 +636,9 @@ impl Renderer {
         }
         self.queue.submit([enc.finish()]);
         self.queue.present(frame);
-        crate::UI_READY.store(true, std::sync::atomic::Ordering::Relaxed);
+        if !crate::UI_READY.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("Jwala: first frame presented ({} draws)", layer.inst.len());
+        }
         true
     }
 }
