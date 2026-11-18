@@ -198,7 +198,9 @@ impl Renderer {
             height: phys.1.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 1,
-            alpha_mode: caps.alpha_modes[0],
+            // opaque where offered: with an alpha-capable X11 visual some drivers default to blending
+            // the window with the desktop
+            alpha_mode: if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) { wgpu::CompositeAlphaMode::Opaque } else { caps.alpha_modes[0] },
             view_formats: vec![],
             color_space: Default::default(),
         };

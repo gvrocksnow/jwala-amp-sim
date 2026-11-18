@@ -4,9 +4,9 @@
 //! - macOS: `hide_window` (from the editor's setup) sets the NSWindow's alpha to 0. baseview has
 //!   just ordered it front, but the main thread is busy with that setup until the first frame, so
 //!   nothing is drawn in between.
-//! - Linux: `hide_window` sets `_NET_WM_WINDOW_OPACITY` to 0 on the top-level window (honoured by
-//!   compositing window managers; without one the window shows as before). Unmapping it instead
-//!   isn't an option: presenting to an unmapped window can stall the GPU driver.
+//! - Linux: not hidden. Setting `_NET_WM_WINDOW_OPACITY` to 0 and removing it after the first frame
+//!   left the window see-through on some compositors (`hide_window_by_opacity`, kept but unused).
+//!   Unmapping it instead isn't an option: presenting to an unmapped window can stall the GPU driver.
 //! - Windows: baseview creates the top-level window already visible (`WS_VISIBLE` is hard-coded), so a
 //! thread-local CBT hook on the GUI thread spots its creation, and a CALLWNDPROCRET hook DWM-cloaks it
 //! right after WM_CREATE. A cloaked window
@@ -228,7 +228,12 @@ mod xwin {
         xlib::XCloseDisplay(dpy);
     }
 
-    pub fn hide_window(handle: RawWindowHandle) {
+    /// Disabled: some compositors (seen on an Ubuntu VM) never show the window again after the
+    /// opacity hint is removed, leaving it see-through. A blank window for a moment is the lesser evil.
+    pub fn hide_window(_handle: RawWindowHandle) {}
+
+    #[allow(dead_code)]
+    fn hide_window_by_opacity(handle: RawWindowHandle) {
         let view: c_ulong = match handle {
             RawWindowHandle::Xlib(h) => h.window,
             RawWindowHandle::Xcb(h) => h.window as c_ulong,
