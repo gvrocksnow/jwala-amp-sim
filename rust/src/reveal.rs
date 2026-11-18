@@ -255,10 +255,12 @@ mod xwin {
                 xlib::XFree(children as *mut _);
             }
             let top = if ok && parent != 0 && parent != root { Some(parent) } else { None };
-            // opaque black (alpha in the top byte of a 32-bit visual's pixel) behind everything
-            for w in [Some(view), top].into_iter().flatten() {
-                xlib::XSetWindowBackground(dpy, w, 0xFF00_0000);
-                xlib::XClearWindow(dpy, w);
+            // opaque black (alpha in the top byte of a 32-bit visual's pixel) behind our view. Only
+            // the top-level: baseview ignores Expose, so a background on the view itself would have
+            // the X server paint over our frame whenever the window manager maps or reframes it
+            if let Some(top) = top {
+                xlib::XSetWindowBackground(dpy, top, 0xFF00_0000);
+                xlib::XClearWindow(dpy, top);
             }
             // and tell the compositor the whole top-level is opaque, whatever its alpha says
             if let Some(top) = top {

@@ -1140,10 +1140,12 @@ impl App {
         let animating = self.animating();
         let since = self.last_frame.elapsed();
         let min_interval = if software { Duration::from_millis(50) } else { Duration::ZERO };
-        // on the software renderer meter movement alone redraws at most 5x a second, and there is no
-        // periodic refresh (each frame is real CPU work)
+        // on the software renderer meter movement alone redraws at most 5x a second, and the periodic
+        // refresh is slower (each frame is real CPU work). It still needs one: on X11 baseview drops
+        // Expose events, so a window the window manager maps or reframes after our frame stays blank
         let meters_due = software && meters != self.last_meters && since > Duration::from_millis(200);
-        let due = self.force_redraw || sig != self.last_sig || meters_due || animating || (!software && since > Duration::from_secs(1));
+        let refresh = if software { Duration::from_secs(2) } else { Duration::from_secs(1) };
+        let due = self.force_redraw || sig != self.last_sig || meters_due || animating || since > refresh;
         if !due || (since < min_interval && !self.force_redraw) {
             return;
         }
