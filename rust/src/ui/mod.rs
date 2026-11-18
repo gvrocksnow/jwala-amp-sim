@@ -3,9 +3,11 @@
 //! input is matched against the regions of the previous frame.
 
 mod assets;
+mod cpu;
 mod gpu;
 mod pages;
 mod painter;
+mod renderer;
 mod text;
 
 use crate::dsp::tuner::Tuner;
@@ -213,7 +215,7 @@ pub struct App {
     ctx: Arc<dyn GuiContext>,
     /// `None` if neither a GPU nor the software renderer could start: the window stays blank
     /// (the audio keeps running) instead of crashing the app or the host.
-    renderer: Option<gpu::Renderer>,
+    renderer: Option<renderer::Renderer>,
     atlas: text::Atlas,
     pub page: usize,
     pub tuner_open: bool,
@@ -281,7 +283,7 @@ impl App {
         }
         let phys =((size.0 as f32 * scale) as u32, (size.1 as f32 * scale) as u32);
         let target = gpu::target(window.raw_window_handle(), window.raw_display_handle());
-        let renderer = match target.and_then(|t| gpu::Renderer::new(t, phys, scale)) {
+        let renderer = match target.and_then(|t| renderer::Renderer::new(t, phys, scale)) {
             Ok(r) => Some(r),
             Err(e) => {
                 renderer_failed(&e);
@@ -386,15 +388,15 @@ impl App {
         self.tuner_open || self.dialog.is_some() || (self.page == 4 && self.params.post[3].on.value())
     }
 
-    /// Drawing with Windows' software renderer (no usable GPU).
+    /// Drawing without a GPU (a software adapter or the CPU renderer).
     pub fn software_render(&self) -> bool {
-        self.renderer.as_ref().is_some_and(|r| r.software)
+        self.renderer.as_ref().is_some_and(|r| r.software())
     }
 
     /// Pixel size of an image asset (1x1 if missing).
     pub fn tex_size(&self, name: &str) -> (f32, f32) {
         let t = self.tex(name);
-        self.renderer.as_ref().and_then(|r| r.tex_sizes.get(t.0).copied()).map(|(w, h)| (w as f32, h as f32)).unwrap_or((1.0, 1.0))
+        self.renderer.as_ref().and_then(|r| r.tex_sizes().get(t.0).copied()).map(|(w, h)| (w as f32, h as f32)).unwrap_or((1.0, 1.0))
     }
 
     pub fn tex(&self, name: &str) -> painter::TexId {
@@ -1159,8 +1161,8 @@ impl App {
         let Some(r) = self.renderer.as_mut() else { return };
         let size = r.logical_size();
         let scale = r.scale();
-        let tex_sizes = r.tex_sizes.clone();
-        let mut keys = std::mem::take(&mut r.shadow_keys);
+        let tex_sizes = r.tex_sizes().to_vec();
+        let mut keys = std::mem::take(r.shadow_keys_mut());
         let mut atlas = std::mem::take(&mut self.atlas);
         let (layer, jobs) = {
             let mut p = Painter::new(size, scale, &mut atlas, &tex_sizes, &mut keys);
@@ -1170,7 +1172,7 @@ impl App {
             (p.layer, p.shadow_jobs)
         };
         if let Some(r) = self.renderer.as_mut() {
-            r.shadow_keys = keys;
+            *r.shadow_keys_mut() = keys;
             // a frame the surface refused must be retried next tick, or (with no periodic refresh on
             // the software renderer) the window stays blank, and hidden until the first frame
             if !r.render(&layer, &jobs, &mut atlas) {

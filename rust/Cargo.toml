@@ -39,6 +39,7 @@ ureq = { version = "2", default-features = false, features = ["native-tls"] }
 native-tls = "0.2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+softbuffer = { version = "0.4", default-features = false, features = ["x11", "x11-dlopen"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
