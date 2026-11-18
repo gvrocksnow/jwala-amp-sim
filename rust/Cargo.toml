@@ -53,6 +53,9 @@ cocoa = "0.24"
 # src/reveal.rs); the version baseview uses
 [target.'cfg(target_os = "linux")'.dependencies]
 x11 = { version = "2.21", features = ["xlib"] }
+# build OpenSSL into the binary: distros ship libssl.so.1.1 or libssl.so.3, never both, so linking
+# the system one breaks on half of them ("libssl.so...: cannot open shared object file")
+native-tls = { version = "0.2", features = ["vendored"] }
 
 [build-dependencies]
 winresource = "0.1"
