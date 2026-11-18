@@ -5,7 +5,8 @@
 //!   just ordered it front, but the main thread is busy with that setup until the first frame, so
 //!   nothing is drawn in between.
 //! - Linux: not hidden. Setting `_NET_WM_WINDOW_OPACITY` to 0 and removing it after the first frame
-//!   left the window see-through on some compositors (`hide_window_by_opacity`, kept but unused).
+//!   left the window see-through on some compositors (`hide_by_opacity`, kept but unused).
+//!   `hide_window` instead makes baseview's 32-bit ARGB windows opaque (background + opaque region).
 //!   Unmapping it instead isn't an option: presenting to an unmapped window can stall the GPU driver.
 //! - Windows: baseview creates the top-level window already visible (`WS_VISIBLE` is hard-coded), so a
 //! thread-local CBT hook on the GUI thread spots its creation, and a CALLWNDPROCRET hook DWM-cloaks it
@@ -228,12 +229,11 @@ mod xwin {
         xlib::XCloseDisplay(dpy);
     }
 
-    /// Disabled: some compositors (seen on an Ubuntu VM) never show the window again after the
-    /// opacity hint is removed, leaving it see-through. A blank window for a moment is the lesser evil.
-    pub fn hide_window(_handle: RawWindowHandle) {}
-
-    #[allow(dead_code)]
-    fn hide_window_by_opacity(handle: RawWindowHandle) {
+    /// Not hidden on Linux (some compositors never showed the window again after the opacity hint
+    /// was removed). Instead this makes the standalone's windows opaque: baseview always creates them
+    /// with a 32-bit ARGB visual and never paints the top-level, so a compositor shows the unpainted
+    /// window, and anything drawn with alpha, as see-through.
+    pub fn hide_window(handle: RawWindowHandle) {
         let view: c_ulong = match handle {
             RawWindowHandle::Xlib(h) => h.window,
             RawWindowHandle::Xcb(h) => h.window as c_ulong,
@@ -254,12 +254,28 @@ mod xwin {
             if !children.is_null() {
                 xlib::XFree(children as *mut _);
             }
-            xlib::XCloseDisplay(dpy);
-            if ok && parent != 0 && parent != root {
-                set_opacity(parent, Some(0));
-                HIDDEN.store(parent as u64, Ordering::Relaxed);
+            let top = if ok && parent != 0 && parent != root { Some(parent) } else { None };
+            // opaque black (alpha in the top byte of a 32-bit visual's pixel) behind everything
+            for w in [Some(view), top].into_iter().flatten() {
+                xlib::XSetWindowBackground(dpy, w, 0xFF00_0000);
+                xlib::XClearWindow(dpy, w);
             }
+            // and tell the compositor the whole top-level is opaque, whatever its alpha says
+            if let Some(top) = top {
+                let prop = xlib::XInternAtom(dpy, c"_NET_WM_OPAQUE_REGION".as_ptr(), xlib::False);
+                let region: [c_long; 4] = [0, 0, 16384, 16384];
+                xlib::XChangeProperty(dpy, top, prop, xlib::XA_CARDINAL, 32, xlib::PropModeReplace, region.as_ptr() as *const c_uchar, 4);
+            }
+            xlib::XFlush(dpy);
+            xlib::XCloseDisplay(dpy);
         }
+    }
+
+    /// The opacity-0 hiding this module used to do (kept for reference; `reveal` undoes it).
+    #[allow(dead_code)]
+    fn hide_by_opacity(top: c_ulong) {
+        unsafe { set_opacity(top, Some(0)) };
+        HIDDEN.store(top as u64, Ordering::Relaxed);
     }
 
     pub fn reveal() {
