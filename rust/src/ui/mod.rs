@@ -1240,6 +1240,8 @@ impl WindowHandler for App {
         match event {
             Event::Mouse(e) => {
                 // take keyboard focus on click so the shortcuts work inside hosts and the standalone
+                // (not on X11: baseview's has_focus/focus there are unimplemented!() and would panic)
+                #[cfg(not(target_os = "linux"))]
                 if matches!(e, MouseEvent::ButtonPressed { .. }) && !window.has_focus() {
                     window.focus();
                 }
