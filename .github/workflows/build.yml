@@ -24,6 +24,10 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Linux builds inside an old distro: the binary needs at least the glibc it was linked against,
+    # so building on ubuntu-latest (glibc 2.39) fails with "GLIBC_2.xx not found" on most distros.
+    # Ubuntu 20.04 → glibc 2.31 (Debian 11+, Ubuntu 20.04+, Fedora 32+, Mint 20+, ...).
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
@@ -31,9 +35,25 @@ jobs:
           - { name: windows-x64, os: windows-latest }
           # Apple Silicon + Intel in one universal binary, cross-compiled on the arm64 runner
           - { name: macos-universal, os: macos-latest, targets: 'aarch64-apple-darwin,x86_64-apple-darwin' }
-          - { name: linux-x64,   os: ubuntu-latest }
+          - { name: linux-x64,   os: ubuntu-latest, container: 'ubuntu:20.04' }
 
     steps:
+      # the bare container has no git/curl/zip; install the build dependencies before anything else
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        working-directory: .
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git zip build-essential pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            libx11-dev libx11-xcb-dev libxcursor-dev libxrandr-dev \
+            libxcb1-dev libxcb-icccm4-dev libxcb-dri2-0-dev \
+            libgl1-mesa-dev libvulkan-dev \
+            libssl-dev
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
@@ -63,17 +83,6 @@ jobs:
           fi
           echo "JWALA_VERSION=$version" >> "$GITHUB_ENV"
           echo "Building Jwala $version"
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libasound2-dev libjack-jackd2-dev \
-            libx11-dev libx11-xcb-dev libxcursor-dev libxrandr-dev \
-            libxcb1-dev libxcb-icccm4-dev libxcb-dri2-0-dev \
-            libgl1-mesa-dev libvulkan-dev \
-            libssl-dev pkg-config
 
       - name: Build
         if: runner.os != 'macOS'
