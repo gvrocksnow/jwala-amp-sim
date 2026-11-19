@@ -183,6 +183,8 @@ mod win {
 
     /// Moves the main window to its saved spot, pulled inside the work area of the monitor nearest
     /// to it if any part would be off screen (top-left wins when the window is bigger than the screen).
+    /// With nothing saved yet (first start), centres it on the monitor it was created on (baseview
+    /// creates it at 0,0: the primary monitor).
     fn restore_position(hwnd: isize) {
         let saved = super::load_pos();
         let Some((outer, vis)) = rects(hwnd) else { return };
@@ -194,7 +196,7 @@ mod win {
             return;
         }
         let wa = info.work;
-        let fit = |pos: i32, size: i32, lo: i32, hi: i32| if size >= hi - lo { lo } else { pos.clamp(lo, hi - size) };
+        let (x, y) = if saved.is_some() { (x, y) } else { (wa.left + (wa.right - wa.left - w) / 2, wa.top + (wa.bottom - wa.top - h) / 2) };        let fit = |pos: i32, size: i32, lo: i32, hi: i32| if size >= hi - lo { lo } else { pos.clamp(lo, hi - size) };
         let (x, y) = (fit(x, w, wa.left, wa.right), fit(y, h, wa.top, wa.bottom));
         if (x, y) == (vis.left, vis.top) {
             return;
@@ -465,8 +467,8 @@ mod xwin {
         fn dlsym(lib: *mut c_void, name: *const c_char) -> *mut c_void;
     }
 
-    /// The monitors' rectangles, from XRandR (loaded at run time, so it isn't a build dependency);
-    /// the whole screen if that isn't available.
+    /// The monitors' rectangles, primary first, from XRandR (loaded at run time, so it isn't a build
+    /// dependency); the whole screen if that isn't available.
     unsafe fn monitors(dpy: *mut xlib::Display, root: c_ulong) -> Vec<(i32, i32, i32, i32)> {
         let screen = xlib::XDefaultScreen(dpy);
         let whole = vec![(0, 0, xlib::XDisplayWidth(dpy, screen), xlib::XDisplayHeight(dpy, screen))];
@@ -485,11 +487,9 @@ mod xwin {
         if list.is_null() {
             return whole;
         }
-        let v: Vec<_> = std::slice::from_raw_parts(list, n.max(0) as usize)
-            .iter()
-            .filter(|m| m.width > 0 && m.height > 0)
-            .map(|m| (m.x, m.y, m.width, m.height))
-            .collect();
+        let mut found: Vec<&MonitorInfo> = std::slice::from_raw_parts(list, n.max(0) as usize).iter().filter(|m| m.width > 0 && m.height > 0).collect();
+        found.sort_by_key(|m| m.primary == 0);
+        let v: Vec<_> = found.iter().map(|m| (m.x, m.y, m.width, m.height)).collect();
         free(list);
         if v.is_empty() { whole } else { v }
     }
@@ -511,16 +511,22 @@ mod xwin {
             .collect()
     }
 
-    /// Moves `top` to its saved spot, kept fully on a monitor.
+    /// Moves `top` to its saved spot, kept fully on a monitor; with nothing saved yet (first
+    /// start), centres it on the primary monitor.
     unsafe fn restore_position(dpy: *mut xlib::Display, top: c_ulong) {
-        let Some((x, y)) = super::load_pos() else { return };
         let mut attrs: xlib::XWindowAttributes = std::mem::zeroed();
         if xlib::XGetWindowAttributes(dpy, top, &mut attrs) == 0 {
             return;
         }
         let (l, r, t, b) = frame_extents(dpy, top);
         let (w, h) = (attrs.width + l + r, attrs.height + t + b);
-        let (x, y) = super::fit_into(x, y, w, h, &usable_areas(dpy, attrs.root));
+        let areas = usable_areas(dpy, attrs.root);
+        let (x, y) = match (super::load_pos(), areas.first()) {
+            (Some(p), _) => p,
+            (None, Some(a)) => (a.0 + (a.2 - w) / 2, a.1 + (a.3 - h) / 2),
+            (None, None) => return,
+        };
+        let (x, y) = super::fit_into(x, y, w, h, &areas);
         // the position is the frame's top-left (NorthWest gravity); USPosition so window managers
         // honour it instead of placing the window themselves
         let mut hints: xlib::XSizeHints = std::mem::zeroed();
