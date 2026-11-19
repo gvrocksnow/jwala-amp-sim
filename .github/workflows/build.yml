@@ -47,7 +47,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl git zip build-essential pkg-config \
+            ca-certificates curl git git-lfs zip build-essential pkg-config \
             libasound2-dev libjack-jackd2-dev \
             libx11-dev libx11-xcb-dev libxcursor-dev libxrandr-dev \
             libxcb1-dev libxcb-icccm4-dev libxcb-dri2-0-dev \
@@ -55,6 +55,8 @@ jobs:
             perl make
 
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: dtolnay/rust-toolchain@stable
         with:
