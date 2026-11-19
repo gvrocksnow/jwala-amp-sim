@@ -1360,7 +1360,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "softbuffer",
- "ttf-parser",
  "ureq",
  "wgpu",
  "winreg",

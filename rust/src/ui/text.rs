@@ -1,5 +1,5 @@
-//! Text: the Windows fonts the C# UI used (or their closest macOS / Linux equivalents, see
-//! `crate::fonts`), rasterised with fontdue into a glyph atlas texture.
+//! Text: the embedded stand-ins for the Windows fonts the C# UI used (see `crate::fonts`),
+//! rasterised with fontdue into a glyph atlas texture.
 //! Sizes are in points like GDI+ (1 pt = 96/72 logical px); glyphs are rasterised at physical size.
 
 use crate::fonts::Face;
@@ -13,17 +13,14 @@ pub enum Font {
     Bold,
     Semibold,
     Light,
-    /// Segoe Script Bold, for the logo.
-    Script,
     ArialBold,
 }
 
-const FACES: [(Font, Face); 6] = [
+const FACES: [(Font, Face); 5] = [
     (Font::Regular, Face::Regular),
     (Font::Bold, Face::Bold),
     (Font::Semibold, Face::Semibold),
     (Font::Light, Face::Light),
-    (Font::Script, Face::Script),
     (Font::ArialBold, Face::ArialBold),
 ];
 
@@ -92,6 +89,10 @@ impl LineMetrics {
 
 pub fn line_metrics(font: Font, pt: f32) -> LineMetrics {
     let px = pt_to_px(pt);
+    let face = FACES.iter().find(|(f, _)| *f == font).map(|(_, face)| *face);
+    if let Some((ascent, descent)) = face.and_then(crate::fonts::line_metrics_em) {
+        return LineMetrics { ascent: ascent * px, descent: descent * px };
+    }
     let m = Fonts::get().fonts.get(&font).and_then(|f| f.horizontal_line_metrics(px));
     m.map(|m| LineMetrics { ascent: m.ascent, descent: m.descent }).unwrap_or(LineMetrics { ascent: px * 0.9, descent: -px * 0.25 })
 }

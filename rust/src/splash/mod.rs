@@ -20,6 +20,8 @@ mod macos;
 mod windows;
 
 const LOGO: &[u8] = include_bytes!("../../../assets/appicon/jwala_512.png");
+/// The "Jwala" wordmark (see `crate::logo`).
+const NAME: &[u8] = include_bytes!("../../../assets/logo_splash.png");
 
 /// Card size and margin for its shadow, in logical px.
 const CARD_W: f32 = 300.0;
@@ -106,10 +108,10 @@ fn rgb(hex: u32) -> [f32; 3] {
     [((hex >> 16) & 255) as f32 / 255.0, ((hex >> 8) & 255) as f32 / 255.0, (hex & 255) as f32 / 255.0]
 }
 
-/// The faces for the name (the UI's script logo face) and the version line.
-fn fonts() -> (Option<fontdue::Font>, Option<fontdue::Font>) {
+/// The face for the version line.
+fn version_font() -> Option<fontdue::Font> {
     use crate::fonts::{load, Face};
-    (load(Face::Script).or_else(|| load(Face::Bold)), load(Face::Regular))
+    load(Face::Regular).or_else(|| load(Face::Bold))
 }
 
 /// Draws `text` centred horizontally on `cx` with its baseline at `baseline` (physical px).
@@ -185,11 +187,22 @@ pub(crate) fn compose(scale: f32, translucent: bool) -> Option<Card> {
 
     // name and version
     let below = card_top + s(34.0) + size as f32;
-    let (script, ui) = fonts();
-    if let Some(font) = &script {
-        draw_text(&mut c, font, "Jwala", s(34.0), cx, below + s(48.0), rgb(0xf2f2f2), 0.0);
+    // the pre-rendered wordmark, its pen origin where the 34 px text used to start
+    if let Ok(name) = image::load_from_memory(NAME).map(|i| i.to_rgba8()) {
+        use crate::logo::{SPLASH_ADVANCE, SPLASH_ORIGIN, SPLASH_SIZE};
+        let (nw, nh) = (s(SPLASH_SIZE.0).round().max(1.0) as u32, s(SPLASH_SIZE.1).round().max(1.0) as u32);
+        let name = image::imageops::resize(&name, nw, nh, image::imageops::FilterType::Lanczos3);
+        let nx = (cx - s(SPLASH_ADVANCE) / 2.0).round() - s(SPLASH_ORIGIN.0).round();
+        let ny = (below + s(48.0) - s(SPLASH_ORIGIN.1)).round();
+        let color = rgb(0xf2f2f2);
+        for (x, y, p) in name.enumerate_pixels() {
+            let (px, py) = (nx + x as f32, ny + y as f32);
+            if px >= 0.0 && py >= 0.0 {
+                c.blend(px as usize, py as usize, color, p[3] as f32 / 255.0);
+            }
+        }
     }
-    if let Some(font) = ui.as_ref().or(script.as_ref()) {
+    if let Some(font) = version_font().as_ref() {
         let version = format!("v{}", env!("CARGO_PKG_VERSION"));
         draw_text(&mut c, font, &version, s(13.0), cx, below + s(78.0), rgb(0x8a8a90), s(1.0));
     }

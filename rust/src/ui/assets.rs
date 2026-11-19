@@ -10,6 +10,7 @@ macro_rules! assets {
 }
 
 static FILES: &[(&str, &[u8])] = assets![
+    "logo_header.png",
     "backdrop.jpg", "faceplate.jpg", "grille.jpg", "tolex.jpg",
     "jewel.png", "knob.png", "pedal_knob.png",
     "amp_head.png", "amp_cab.png", "amp_knob.png", "amp_led_green.png", "amp_led_red.png", "amp_led_off.png",

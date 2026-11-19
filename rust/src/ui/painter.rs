@@ -344,19 +344,6 @@ impl<'a> Painter<'a> {
         self.glyphs(font, pt, s, x, y + m.ascent, color, None, 0.0, gap);
     }
 
-    /// The "Jwala" script logo with drop shadow and silver gradient (Gfx.Logo in the C# app).
-    pub fn logo(&mut self, r: Rect, pt: f32, h_align: f32) {
-        let s = "Jwala";
-        let m = text::line_metrics(Font::Script, pt);
-        let w = text::measure(Font::Script, pt, s);
-        let x = r.x + (r.w - w) * h_align + 4.0;
-        let base = r.y + (r.h - m.height()) / 2.0 + m.ascent;
-        let skew = 0.18; // GDI+ synthesises italic for this face
-        self.glyphs(Font::Script, pt, s, x + pt / 14.0, base + pt / 11.0, rgba(0, 0, 0, 170), None, skew, 0.0);
-        let (top, bottom) = (rgb(255, 255, 255), rgb(150, 153, 162));
-        self.glyphs(Font::Script, pt, s, x, base, top, Some((bottom, r.y, r.bottom())), skew, 0.0);
-    }
-
     // ------------------------------------------------------------------ shadows
 
     /// Soft shadow cast by whatever `occluders` draws, optionally only onto `receiver`'s pixels.

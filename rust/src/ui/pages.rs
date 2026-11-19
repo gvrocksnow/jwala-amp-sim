@@ -181,11 +181,11 @@ fn header(app: &mut App, p: &mut Painter, w: f32) {
     p.fill(Rect::new(0.0, ROW1, w, ROW2), rgb(11, 11, 13));
     p.fill(Rect::new(0.0, ROW1, w, 1.0), with_alpha(ACCENT, 70));
     p.fill(Rect::new(0.0, HEADER - 1.0, w, 1.0), with_alpha(ACCENT, 70));
-    p.logo(Rect::new(14.0, 6.0, 260.0, 52.0), 20.0, 0.0);
-    // version, baseline-aligned just after the logo script
-    let lm = text::line_metrics(Font::Script, 20.0);
-    let base = 6.0 + (52.0 - lm.height()) / 2.0 + lm.ascent;
-    let vx = 18.0 + text::measure(Font::Script, 20.0, "Jwala") + 8.0;
+    let (lx, ly, lw, lh) = crate::logo::HEADER;
+    p.image(app.tex("logo_header.png"), Rect::new(lx, ly, lw, lh));
+    // version, baseline-aligned just after the logo
+    let base = crate::logo::HEADER_BASELINE;
+    let vx = crate::logo::HEADER_END + 8.0;
     p.text(Font::ArialBold, 14.0, concat!("v", env!("CARGO_PKG_VERSION")), vx, base - text::line_metrics(Font::ArialBold, 14.0).ascent, DIM);
 
     // right side: (standalone) settings and power, then meters and global knobs

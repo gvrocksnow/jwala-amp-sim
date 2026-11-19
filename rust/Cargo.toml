@@ -22,9 +22,6 @@ wgpu = "30"
 pollster = "1"
 bytemuck = { version = "1", features = ["derive"] }
 fontdue = "0.9"
-# picking faces by PostScript name inside macOS .ttc collections (src/fonts.rs); fontdue's own parser,
-# same version and features, so nothing extra is built
-ttf-parser = { version = "0.25", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rfd = "0.17"
 cpal = "0.15"

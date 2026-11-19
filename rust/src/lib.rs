@@ -2,6 +2,7 @@
 
 pub mod dsp;
 mod fonts;
+mod logo;
 pub mod params;
 pub mod plugin;
 pub mod presets;
