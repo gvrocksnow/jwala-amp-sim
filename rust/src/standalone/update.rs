@@ -57,7 +57,11 @@ pub struct Updater {
     status: Arc<Mutex<Status>>,
     /// Bumped on every status change, so the UI knows to redraw.
     gen: Arc<AtomicU32>,
+    /// Download progress in thousandths, or `NO_PROGRESS` while the size isn't known.
+    progress: Arc<AtomicU32>,
 }
+
+const NO_PROGRESS: u32 = u32::MAX;
 
 impl Updater {
     pub fn status(&self) -> Status {
@@ -66,6 +70,23 @@ impl Updater {
 
     pub fn generation(&self) -> u32 {
         self.gen.load(Ordering::Relaxed)
+    }
+
+    /// How much of the download has arrived (0–1), once its size is known.
+    pub fn progress(&self) -> Option<f32> {
+        let p = self.progress.load(Ordering::Relaxed);
+        (p != NO_PROGRESS).then(|| p.min(1000) as f32 / 1000.0)
+    }
+
+    /// Records download progress; bumps the generation only when the shown value changes.
+    fn set_progress(&self, done: u64, total: Option<u64>) {
+        let p = match total {
+            Some(t) if t > 0 => (done.min(t) * 1000 / t) as u32,
+            _ => NO_PROGRESS,
+        };
+        if self.progress.swap(p, Ordering::Relaxed) != p {
+            self.gen.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn set(&self, s: Status) {
@@ -92,10 +113,11 @@ impl Updater {
     /// messages while it waits, which on the UI thread re-enters the window procedure and aborts.
     pub fn download(&self) {
         let Status::Available(rel) = self.status() else { return };
+        self.progress.store(NO_PROGRESS, Ordering::Relaxed);
         self.set(Status::Downloading(rel.clone()));
         let me = self.clone();
         std::thread::spawn(move || {
-            me.set(match stage(&rel) {
+            me.set(match stage(&rel, &me) {
                 Ok(dir) => {
                     let note = update_plugins(&dir, &rel.version);
                     Status::Ready(rel, dir, note)
@@ -172,21 +194,28 @@ pub fn update_dir() -> PathBuf {
 }
 
 /// Downloads, verifies and unpacks `rel`; returns the folder holding the new build.
-fn stage(rel: &Release) -> Result<PathBuf, String> {
+fn stage(rel: &Release, updater: &Updater) -> Result<PathBuf, String> {
     use sha2::Digest;
     let sha_url = rel.sha_url.as_ref().ok_or("this release has no checksum file, so it can't be installed automatically — download it from the release page")?;
     let want = agent()?.get(sha_url).call().map_err(net_err)?.into_string().map_err(|e| e.to_string())?;
     let want = want.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
 
-    let mut bytes = Vec::new();
-    agent()?
-        .get(&rel.zip_url)
-        .call()
-        .map_err(net_err)?
-        .into_reader()
-        .take(MAX_DOWNLOAD)
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("download interrupted: {e}"))?;
+    let resp = agent()?.get(&rel.zip_url).call().map_err(net_err)?;
+    let total = resp.header("Content-Length").and_then(|v| v.trim().parse::<u64>().ok()).filter(|&n| n > 0 && n <= MAX_DOWNLOAD);
+    let mut bytes = Vec::with_capacity(total.unwrap_or(0) as usize);
+    let mut reader = resp.into_reader().take(MAX_DOWNLOAD);
+    let mut buf = vec![0u8; 64 << 10];
+    updater.set_progress(0, total);
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(format!("download interrupted: {e}")),
+        };
+        bytes.extend_from_slice(&buf[..n]);
+        updater.set_progress(bytes.len() as u64, total);
+    }
     let got = format!("{:x}", sha2::Sha256::digest(&bytes));
     if want.len() != 64 || got != want {
         return Err("the download didn't match its checksum — not installing it".into());

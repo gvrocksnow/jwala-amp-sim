@@ -1605,7 +1605,7 @@ fn audio_settings(app: &mut App, p: &mut Painter, w: f32, h: f32) {
 fn update_row(app: &mut App, p: &mut Painter, r: Rect, y: f32) {
     use crate::standalone::update::{Status, VERSION};
     let Some(a) = &app.audio else { return };
-    let (on, status) = (a.auto_update, a.updater.status());
+    let (on, status, progress) = (a.auto_update, a.updater.status(), a.updater.progress());
     let note = match &status {
         Status::Checking => "checking…".to_string(),
         Status::Available(rel) | Status::Downloading(rel) | Status::Ready(rel, ..) => format!("v{} available", rel.version),
@@ -1621,7 +1621,10 @@ fn update_row(app: &mut App, p: &mut Painter, r: Rect, y: f32) {
     button(app, p, Rect::new(x0, y, bw, 32.0), if on { "AUTO-UPDATE: ON" } else { "AUTO-UPDATE: OFF" }, Hit::ToggleAutoUpdate, on, 8.5);
     let (label, hit) = match &status {
         Status::Checking => ("CHECKING…".to_string(), Hit::Block),
-        Status::Downloading(rel) => (format!("DOWNLOADING v{}…", rel.version), Hit::Block),
+        Status::Downloading(rel) => match progress {
+            Some(f) => (format!("DOWNLOADING {:.0}%", f * 100.0), Hit::Block),
+            None => (format!("DOWNLOADING v{}…", rel.version), Hit::Block),
+        },
         Status::Ready(..) => ("INSTALLING…".to_string(), Hit::Block),
         Status::Available(rel) => (format!("INSTALL v{}", rel.version), Hit::InstallUpdate),
         _ => ("CHECK NOW".to_string(), Hit::CheckUpdate),
@@ -1630,6 +1633,13 @@ fn update_row(app: &mut App, p: &mut Painter, r: Rect, y: f32) {
     button(app, p, br, &label, hit, matches!(status, Status::Available(_)), 8.5);
     if hit == Hit::Block {
         p.rrect(br, 5.0, rgba(20, 18, 16, 120)); // busy
+    }
+    if let (Status::Downloading(_), Some(f)) = (&status, progress) {
+        let track = Rect::new(br.x + 6.0, br.bottom() - 6.0, br.w - 12.0, 3.0);
+        p.rrect(track, 1.5, rgba(255, 255, 255, 28));
+        if f > 0.0 {
+            p.rrect(Rect::new(track.x, track.y, (track.w * f).max(3.0), track.h), 1.5, ACCENT);
+        }
     }
 }
 
@@ -1640,20 +1650,35 @@ fn update_banner(app: &mut App, p: &mut Painter, w: f32) {
     if a.pending.is_some() {
         return; // the settings page has its own update row
     }
-    let (text, buttons) = match a.updater.status() {
-        Status::Available(rel) if rel.version != a.skipped_version && !a.update_dismissed => (format!("Jwala v{} is available", rel.version), true),
-        Status::Downloading(rel) if !a.update_dismissed => (format!("Downloading Jwala v{}…", rel.version), false),
-        Status::Ready(rel, ..) => (format!("Installing Jwala v{}…", rel.version), false),
+    let progress = a.updater.progress();
+    let (text, buttons, bar) = match a.updater.status() {
+        Status::Available(rel) if rel.version != a.skipped_version && !a.update_dismissed => (format!("Jwala v{} is available", rel.version), true, None),
+        Status::Downloading(rel) if !a.update_dismissed => match progress {
+            Some(f) => (format!("Downloading Jwala v{}…  {:.0}%", rel.version, f * 100.0), false, Some(f)),
+            None => (format!("Downloading Jwala v{}…", rel.version), false, Some(0.0)),
+        },
+        Status::Ready(rel, ..) => (format!("Installing Jwala v{}…", rel.version), false, None),
         _ => return,
     };
     let bw = if buttons { 3.0 * 76.0 + 2.0 * 6.0 + 12.0 } else { 0.0 };
-    let tw = text::measure(Font::Semibold, 9.5, &text) + 36.0;
+    // sized for "100%" so the banner doesn't twitch as the number grows
+    let widest = if bar.is_some() { format!("{text}100%") } else { text.clone() };
+    let tw = text::measure(Font::Semibold, 9.5, &widest).max(260.0) + 36.0;
     let r = Rect::new(((w - tw - bw) / 2.0).round(), HEADER + 10.0, tw + bw, 40.0);
     p.rrect(Rect::new(r.x + 3.0, r.y + 5.0, r.w, r.h), 8.0, rgba(0, 0, 0, 110));
     p.rrect(r, 8.0, rgba(24, 24, 27, 245));
     p.rrect_stroke(r, 8.0, 1.0, with_alpha(ACCENT, 170));
     app.hits.push((r, Hit::Block));
-    p.text_in(Font::Semibold, 9.5, &text, Rect::new(r.x + 18.0, r.y, tw - 18.0, r.h), 0.0, 0.5, TEXT);
+    if let Some(f) = bar {
+        p.text_in(Font::Semibold, 9.5, &text, Rect::new(r.x + 18.0, r.y, tw - 18.0, r.h - 8.0), 0.0, 0.5, TEXT);
+        let track = Rect::new(r.x + 18.0, r.bottom() - 12.0, r.w - 36.0, 4.0);
+        p.rrect(track, 2.0, rgba(255, 255, 255, 28));
+        if f > 0.0 {
+            p.rrect(Rect::new(track.x, track.y, (track.w * f).max(4.0), track.h), 2.0, ACCENT);
+        }
+    } else {
+        p.text_in(Font::Semibold, 9.5, &text, Rect::new(r.x + 18.0, r.y, tw - 18.0, r.h), 0.0, 0.5, TEXT);
+    }
     if buttons {
         let mut x = r.x + tw;
         for (label, hit, primary) in [("INSTALL", Hit::InstallUpdate, true), ("SKIP", Hit::SkipUpdate, false), ("LATER", Hit::LaterUpdate, false)] {
