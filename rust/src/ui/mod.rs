@@ -1317,6 +1317,9 @@ impl WindowHandler for App {
             }
             Event::Window(WindowEvent::WillClose) => {
                 self.save_now();
+                if self.shared.standalone.load(Ordering::Relaxed) {
+                    crate::reveal::save_position();
+                }
                 if let Some(a) = self.audio.as_mut() {
                     a.host.stop();
                 }

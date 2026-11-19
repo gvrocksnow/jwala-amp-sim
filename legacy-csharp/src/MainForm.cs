@@ -25,6 +25,9 @@ public sealed class Settings
     public string Preset { get; set; } = "Classic Crunch";
     public int Page { get; set; } = 1;
     public Dictionary<string, float> State { get; set; }
+    /// <summary>Top-left of the main window's visible frame when it was last closed.</summary>
+    public int? WindowX { get; set; }
+    public int? WindowY { get; set; }
 
     public static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Jwala");
     static string PathOf => Path.Combine(Dir, "settings.json");
@@ -368,11 +371,52 @@ public sealed class MainForm : Form
         s.Save();
     }
 
+    // ------------------------------------------------------------------ window position
+    // The window reopens where it was last closed, pulled fully inside the nearest screen's work
+    // area if part of it would be off screen. Positions are of the visible frame: Windows 10+ adds
+    // invisible resize borders around it, which may hang off the screen.
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT value, int size);
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct RECT { public int Left, Top, Right, Bottom; }
+    const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+
+    /// <summary>How far the window's bounds reach past its visible frame on the left and top.</summary>
+    Point frameInset;
+
+    Rectangle VisibleFrame()
+    {
+        if (IsHandleCreated && DwmGetWindowAttribute(Handle, DWMWA_EXTENDED_FRAME_BOUNDS, out var r, 16) == 0 && r.Right > r.Left)
+            return Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+        return Bounds;
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        var vis = VisibleFrame();
+        frameInset = new Point(vis.Left - Bounds.Left, vis.Top - Bounds.Top);
+        if (!autoStart || s.WindowX is not int x || s.WindowY is not int y) return;
+        var want = new Rectangle(x, y, vis.Width, vis.Height);
+        var wa = Screen.FromRectangle(want).WorkingArea;
+        static int Fit(int pos, int size, int lo, int len) => size >= len ? lo : Math.Clamp(pos, lo, lo + len - size);
+        Location = new Point(Fit(x, vis.Width, wa.Left, wa.Width) - frameInset.X, Fit(y, vis.Height, wa.Top, wa.Height) - frameInset.Y);
+    }
+
+    void RememberPosition()
+    {
+        var p = WindowState == FormWindowState.Normal ? VisibleFrame().Location
+            : new Point(RestoreBounds.Left + frameInset.X, RestoreBounds.Top + frameInset.Y);
+        s.WindowX = p.X;
+        s.WindowY = p.Y;
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         host.Stop();
         saveDebounce?.Dispose();
-        if (autoStart) SaveNow();
+        if (autoStart) { RememberPosition(); SaveNow(); }
         base.OnFormClosing(e);
     }
 }
