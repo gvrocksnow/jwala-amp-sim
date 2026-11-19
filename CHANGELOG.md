@@ -4,9 +4,17 @@ All notable changes to Jwala are recorded here, newest first.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-19
+
+### Added
+- **Window position (Rust and C#):** the standalone reopens where it was last closed. If any part of it would be off screen (a monitor unplugged, a lower resolution), it's pulled fully inside the nearest screen's usable area, clear of the taskbar, menu bar, Dock or panels. Windows, macOS and Linux (X11).
+
 ### Changed
 - **Fonts (Rust and C#):** the UI's fonts are now built into the app, so text looks the same on Windows, macOS and Linux instead of depending on what each system has installed. Segoe UI is replaced by Selawik (its open, same-width substitute), Arial Bold by Arimo Bold, and the symbol font by DejaVu Sans. Pedal names and other text sized to the line height match the old Segoe UI layout.
 - **Logo (Rust and C#):** the "Jwala" title in the header and on the splash is now an image rendered from Segoe Script Bold, so it keeps its original look everywhere.
+
+### Version
+- Bumped to 0.3.3 in `rust/Cargo.toml` and `legacy-csharp/src/Jwala.csproj`.
 
 ## [0.3.2] - 2026-11-18
 
