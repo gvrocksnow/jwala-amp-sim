@@ -171,7 +171,7 @@ Jwala.exe --render in.wav out.wav "Classic Crunch" amp.GAIN=0.7 ir=my_cab.wav
 
 - **Framework:** [nih-plug](https://github.com/robbert-vdh/nih-plug) for VST3/CLAP. The DSP in `rust/src/dsp/` is independent of the plugin layer.
 - **UI:** a custom **wgpu** renderer. One instanced shader draws every primitive (rounded rects, mipmapped images, glyph-atlas text, glows, lines); pedal and knob soft shadows are real GPU blur passes, cached until the layout changes.
-- **Fonts:** embedded, so the UI looks the same on every platform: Selawik (Segoe UI's open substitute) and Arimo Bold (for Arial Bold), both SIL OFL, with DejaVu Sans for symbols. Licences are in `assets/fonts/`. The "Jwala" title is a pre-rendered Segoe Script image (`assets/logo_*.png`); regenerate it on Windows with `cargo test --lib bake_logo -- --ignored --nocapture`.
+- **Fonts:** embedded (in the C# version too), so the UI looks the same on every platform: Selawik (Segoe UI's open substitute) and Arimo Bold (for Arial Bold), both SIL OFL, with DejaVu Sans for symbols. Licences are in `assets/fonts/`. The "Jwala" title is a pre-rendered Segoe Script image (`assets/logo_*.png`); regenerate it on Windows with `cargo test --lib bake_logo -- --ignored --nocapture`.
 - **Amp DSP:** 4x oversampled pedals, preamp, tone stack and power amp (8x for Lead II, whose triodes use the Koren plate-current model); the tone stack uses the Yeh & Smith circuit discretization.
 - **Reverb:** a 16-line Hadamard feedback delay network with allpass diffusers, slowly wandering line lengths and a phase-aligned octave-up grain shifter for the shimmer.
 - **EQ:** the band gains are fitted with the Välimäki & Liski cascade graphic-EQ method.

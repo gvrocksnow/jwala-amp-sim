@@ -250,7 +250,21 @@ static class Splash
 
             // name and version, baselines matching the Rust splash
             float below = ly + size;
-            DrawCentered(g, "Jwala", "Segoe Script", FontStyle.Bold, S(34), cx, below + S(48), Color.FromArgb(0xf2, 0xf2, 0xf2));
+            // the pre-rendered "Jwala" (assets/logo_splash.png, a white mask; geometry in rust/src/logo.rs),
+            // its pen origin where the 34 px text starts
+            using (var res = typeof(Splash).Assembly.GetManifestResourceStream("logo_splash.png"))
+            using (var name = new Bitmap(res))
+            using (var tint = new ImageAttributes())
+            {
+                const float W = 118, H = 59, OriginX = 2, OriginY = 40, Advance = 111.01f;
+                tint.SetColorMatrix(new ColorMatrix { Matrix00 = 0xf2 / 255f, Matrix11 = 0xf2 / 255f, Matrix22 = 0xf2 / 255f });
+                float nx = MathF.Round(cx - S(Advance) / 2) - MathF.Round(S(OriginX)), ny = MathF.Round(below + S(48) - S(OriginY));
+                var dest = Rectangle.Round(new RectangleF(nx, ny, S(W), S(H)));
+                var mode = g.InterpolationMode;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.DrawImage(name, dest, 0, 0, name.Width, name.Height, GraphicsUnit.Pixel, tint);
+                g.InterpolationMode = mode;
+            }
             var v = typeof(Splash).Assembly.GetName().Version;
             DrawCentered(g, $"v{v.Major}.{v.Minor}.{v.Build}", "Segoe UI", FontStyle.Regular, S(13), cx, below + S(78), Color.FromArgb(0x8a, 0x8a, 0x90));
             return bmp;
@@ -262,7 +276,7 @@ static class Splash
         /// <summary>Draws <paramref name="text"/> centred on <paramref name="cx"/> with its baseline at <paramref name="baseline"/>.</summary>
         static void DrawCentered(Graphics g, string text, string family, FontStyle style, float px, float cx, float baseline, Color color)
         {
-            using var font = new Font(family, px, style, GraphicsUnit.Pixel);
+            using var font = Fonts.Get(family, px, style, GraphicsUnit.Pixel);
             var ff = font.FontFamily;
             float ascent = px * ff.GetCellAscent(style) / ff.GetEmHeight(style);
             using var brush = new SolidBrush(color);

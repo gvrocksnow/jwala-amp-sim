@@ -68,16 +68,6 @@ static class Gfx
         }
     }
 
-    public static void Logo(Graphics g, RectangleF r, float size, StringAlignment align = StringAlignment.Center)
-    {
-        using var f = new Font("Segoe Script", size, FontStyle.Bold | FontStyle.Italic);
-        var sf = new StringFormat { Alignment = align, LineAlignment = StringAlignment.Center };
-        using (var sh = new SolidBrush(Color.FromArgb(170, 0, 0, 0)))
-            g.DrawString("Jwala", f, sh, new RectangleF(r.X + size / 14, r.Y + size / 11, r.Width, r.Height), sf);
-        using var gb = new LinearGradientBrush(r, Color.FromArgb(255, 255, 255), Color.FromArgb(150, 153, 162), 90f);
-        g.DrawString("Jwala", f, gb, r, sf);
-    }
-
     public static void Led(Graphics g, RectangleF r, bool on, Color c)
     {
         if (on)
@@ -164,7 +154,7 @@ static class Gfx
         foreach (char c in text)
             if (runs.Count > 0 && runs[^1].Sym == Sym(c)) runs[^1] = (runs[^1].S + c, Sym(c));
             else runs.Add((c.ToString(), Sym(c)));
-        using var sym = new Font("Segoe UI Symbol", f.Size, f.Style & ~FontStyle.Bold, f.Unit);
+        using var sym = Fonts.Get("Segoe UI Symbol", f.Size, f.Style & ~FontStyle.Bold, f.Unit);
         float Px(Font font, int metric) => font.SizeInPoints * g.DpiY / 72f * metric / font.FontFamily.GetEmHeight(font.Style);
         float asc = Px(f, f.FontFamily.GetCellAscent(f.Style)), lh = asc + Px(f, f.FontFamily.GetCellDescent(f.Style));
         var widths = new float[runs.Count];
@@ -248,7 +238,7 @@ sealed class KnobWidget : Widget
 
         if (dragging || hot)
         {
-            using var f = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+            using var f = Fonts.Get("Segoe UI", 8.5f, FontStyle.Bold);
             var txt = P.Display;
             float tw = g.MeasureString(txt, f, PointF.Empty, Gfx.Typo).Width;
             var rr = new RectangleF(cx - tw / 2 - 5, b.Bottom + 4, tw + 10, 17);
@@ -291,7 +281,7 @@ sealed class SwitchWidget : Widget
             g.FillPath(bg, path);
         using (var pen = new Pen(on ? Color.FromArgb(120, LedColor) : Color.FromArgb(140, 0, 0, 0), 1.2f)) g.DrawPath(pen, path);
         Gfx.Led(g, new RectangleF(r.X + 8 * k, r.Y + r.Height / 2 - 3.5f * k, 7 * k, 7 * k), on, LedColor);
-        using var f = new Font("Arial", FontSize, FontStyle.Bold);
+        using var f = Fonts.Get("Arial", FontSize, FontStyle.Bold);
         using var tb = new SolidBrush(on ? Color.FromArgb(245, 235, 210) : Gfx.Dim);
         g.DrawString(Text, f, tb, new RectangleF(r.X + 16 * k, r.Y, r.Width - 18 * k, r.Height), Gfx.CenterNoWrap);
     }
@@ -310,7 +300,7 @@ sealed class ButtonWidget : Widget
         using (var bg = new SolidBrush(pressed ? Color.FromArgb(63, 63, 66) : on ? Color.FromArgb(64, 64, 67) : hot ? Color.FromArgb(51, 51, 54) : Color.FromArgb(37, 37, 40)))
             g.FillPath(bg, path);
         using (var pen = new Pen(on ? Gfx.Accent : Color.FromArgb(73, 73, 76), 1)) g.DrawPath(pen, path);
-        using var f = new Font("Segoe UI", FontSize, Bold ? FontStyle.Bold : FontStyle.Regular);
+        using var f = Fonts.Get("Segoe UI", FontSize, Bold ? FontStyle.Bold : FontStyle.Regular);
         using var tb = new SolidBrush(on ? Color.FromArgb(255, 255, 255) : Gfx.Text);
         Gfx.DrawText(g, Text, f, tb, r);
     }

@@ -61,7 +61,7 @@ sealed class HeaderBar : WidgetSurface
                 using var path = Gfx.Round(b, 6);
                 using (var bg = new SolidBrush(hot ? Color.FromArgb(41, 41, 44) : Color.FromArgb(27, 27, 30))) g.FillPath(bg, path);
                 using (var pen = new Pen(Color.FromArgb(110, Gfx.Accent), 1)) g.DrawPath(pen, path);
-                using var f = new Font("Segoe UI", 10.5f, FontStyle.Bold);
+                using var f = Fonts.Get("Segoe UI", 10.5f, FontStyle.Bold);
                 using var tb = new SolidBrush(Gfx.Text);
                 g.DrawString(PresetName(), f, tb, new RectangleF(b.X + 10, b.Y, b.Width - 34, b.Height), Gfx.Format(StringAlignment.Center, StringAlignment.Center, true, StringTrimming.EllipsisCharacter));
                 using var ab = new SolidBrush(Gfx.Accent);
@@ -91,12 +91,12 @@ sealed class HeaderBar : WidgetSurface
         using var path = Gfx.Round(b, 6);
         using (var bg = new SolidBrush(active ? Color.FromArgb(48, 48, 51) : hot ? Color.FromArgb(35, 35, 38) : Color.FromArgb(23, 23, 26))) g.FillPath(bg, path);
         using (var pen = new Pen(active ? Gfx.Accent : Color.FromArgb(55, 55, 58), active ? 1.5f : 1)) g.DrawPath(pen, path);
-        using var f = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        using var f = Fonts.Get("Segoe UI", 8.5f, FontStyle.Bold);
         using var tb = new SolidBrush(active ? Color.FromArgb(255, 255, 255) : Gfx.Text);
         g.DrawString(Pages[idx], f, tb, new RectangleF(b.X, b.Y + 2, b.Width, b.Height / 2), Gfx.CenterNoWrap);
 
         // mini chain status under the label
-        using var sf = new Font("Segoe UI", 7f, FontStyle.Bold);
+        using var sf = Fonts.Get("Segoe UI", 7f, FontStyle.Bold);
         var sub = new RectangleF(b.X, b.Y + b.Height / 2, b.Width, b.Height / 2 - 2);
         if (idx == 3 && m.Eq.Enabled)
         {
@@ -160,23 +160,25 @@ sealed class HeaderBar : WidgetSurface
     void PaintGear(Graphics g, RectangleF b, bool hot, bool pressed)
     {
         using (var bg = new SolidBrush(hot ? Color.FromArgb(47, 47, 50) : Color.FromArgb(29, 29, 32))) g.FillEllipse(bg, b);
-        using var f = new Font("Segoe UI Symbol", 14f);
+        using var f = Fonts.Get("Segoe UI Symbol", 14f);
         using var tb = new SolidBrush(Gfx.Text);
         g.DrawString("⚙", f, tb, b, Gfx.Center);
     }
 
     static readonly string Version = "v" + typeof(HeaderBar).Assembly.GetName().Version.ToString(3);
 
-    /// <summary>The app version, baseline-aligned just after the logo script.</summary>
+    /// <summary>The "Jwala" logo: pre-rendered from Segoe Script Bold with its silver gradient and shadow
+    /// (assets/logo_header.png, shared with the Rust version, which has the geometry in rust/src/logo.rs).</summary>
+    static readonly RectangleF LogoRect = new(14, 6, 104, 52);
+    const float LogoBaseline = 39.92f, LogoEnd = 105.07f;
+
+    /// <summary>The app version, baseline-aligned just after the logo.</summary>
     static void PaintVersion(Graphics g)
     {
-        using var lf = new Font("Segoe Script", 20, FontStyle.Bold | FontStyle.Italic);
-        using var vf = new Font("Arial", 14f, FontStyle.Bold);
-        float Ascent(Font f) => f.GetHeight(g) * f.FontFamily.GetCellAscent(f.Style) / f.FontFamily.GetLineSpacing(f.Style);
-        float baseline = 6 + (52 - lf.GetHeight(g)) / 2 + Ascent(lf);
-        float x = 14 + g.MeasureString("Jwala", lf).Width + 2;
+        using var vf = Fonts.Get("Arial", 14f, FontStyle.Bold);
+        float ascent = vf.GetHeight(g) * vf.FontFamily.GetCellAscent(vf.Style) / vf.FontFamily.GetLineSpacing(vf.Style);
         using var b = new SolidBrush(Gfx.Dim);
-        g.DrawString(Version, vf, b, x, baseline - Ascent(vf));
+        g.DrawString(Version, vf, b, LogoEnd + 8, LogoBaseline - ascent);
     }
 
     protected override void PaintStatic(Graphics g)
@@ -186,10 +188,13 @@ sealed class HeaderBar : WidgetSurface
             g.FillRectangle(bg, 0, 0, r.Width, Row1);
         using (var bg2 = new SolidBrush(Color.FromArgb(12, 11, 10))) g.FillRectangle(bg2, 0, Row1, r.Width, Row2);
         using (var line = new Pen(Color.FromArgb(70, Gfx.Accent))) { g.DrawLine(line, 0, Row1, r.Width, Row1); g.DrawLine(line, 0, r.Height - 1, r.Width, r.Height - 1); }
-        Gfx.Logo(g, new RectangleF(14, 6, 260, 52), 20, StringAlignment.Near);
+        var mode = g.InterpolationMode;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.DrawImage(Assets.Image("logo_header.png"), LogoRect);
+        g.InterpolationMode = mode;
         PaintVersion(g);
 
-        using var lf = new Font("Arial", 6.5f, FontStyle.Bold);
+        using var lf = Fonts.Get("Arial", 6.5f, FontStyle.Bold);
         using var lb = new SolidBrush(Gfx.Dim);
         foreach (var w in W)
             if (w is KnobWidget k)
@@ -198,12 +203,12 @@ sealed class HeaderBar : WidgetSurface
         g.DrawString("OUT", lf, lb, new RectangleF(meterL.X - 12, meterL.Bottom + 1, 42, 10), Gfx.CenterNoWrap);
 
         // arrows between the chain tabs
-        using var af = new Font("Segoe UI", 12f, FontStyle.Bold);
+        using var af = Fonts.Get("Segoe UI", 12f, FontStyle.Bold);
         using var ab = new SolidBrush(Color.FromArgb(120, Gfx.Accent));
         var tabs = W.Where(w => w is CustomWidget && w.Bounds.Y > Row1).ToList();
         for (int i = 0; i + 1 < tabs.Count; i++)
             g.DrawString("→", af, ab, new RectangleF(tabs[i].Bounds.Right, tabs[i].Bounds.Y, tabs[i + 1].Bounds.X - tabs[i].Bounds.Right, tabs[i].Bounds.Height), Gfx.Center);
-        using var cf = new Font("Segoe UI", 7.5f, FontStyle.Bold);
+        using var cf = Fonts.Get("Segoe UI", 7.5f, FontStyle.Bold);
         g.DrawString("SIGNAL CHAIN", cf, lb, 18, Row1 + 18, Gfx.Typo);
     }
 
@@ -213,7 +218,7 @@ sealed class HeaderBar : WidgetSurface
         Gfx.Meter(g, meterIn, e?.InputPeak ?? 0);
         Gfx.Meter(g, meterL, e?.OutputPeakL ?? 0);
         Gfx.Meter(g, meterR, e?.OutputPeakR ?? 0);
-        using var f = new Font("Segoe UI", 7.5f);
+        using var f = Fonts.Get("Segoe UI", 7.5f);
         using var tb = new SolidBrush(PowerOn() ? Gfx.Dim : Color.FromArgb(230, 120, 90));
         string s = Status() + (PowerOn() ? $"  ·  CPU {CpuLoad() * 100:0}%" : "");
         g.DrawString(s, f, tb, statusRect, Gfx.Format(StringAlignment.Far, StringAlignment.Center, false, StringTrimming.EllipsisCharacter));

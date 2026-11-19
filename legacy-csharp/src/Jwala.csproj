@@ -23,6 +23,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="..\..\assets\*.*" LogicalName="%(Filename)%(Extension)" />
+    <!-- the UI fonts (UI/Fonts.cs) -->
+    <EmbeddedResource Include="..\..\assets\fonts\*.ttf" LogicalName="%(Filename)%(Extension)" />
     <!-- the startup splash's logo (UI/Splash.cs) -->
     <EmbeddedResource Include="..\..\assets\appicon\jwala_512.png" LogicalName="jwala_512.png" />
   </ItemGroup>

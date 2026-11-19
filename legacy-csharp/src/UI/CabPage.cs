@@ -90,7 +90,7 @@ sealed class CabPage : WidgetSurface
             Bounds = new RectangleF(p.X + 150, p.Y + 176, p.Width - 170, 30), Hit = RectangleF.Empty,
             OnPaint = (g, b, _, _) =>
             {
-                using var f = new Font("Segoe UI", 8.5f);
+                using var f = Fonts.Get("Segoe UI", 8.5f);
                 using var tb = new SolidBrush(Gfx.Dim);
                 string name = m.Cab.IrPath == null ? "no IR loaded" : Path.GetFileName(m.Cab.IrPath);
                 g.DrawString(name, f, tb, b, Gfx.Format(StringAlignment.Near, StringAlignment.Center, true, StringTrimming.EllipsisCharacter));
@@ -203,7 +203,7 @@ sealed class CabPage : WidgetSurface
             using var pen = new Pen(Color.FromArgb(180, Gfx.Accent), 2);
             g.DrawEllipse(pen, mic.X + mic.Width * MicHead.X - d / 2, mic.Y + mic.Height * MicHead.Y - d / 2, d, d);
         }
-        using var f = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        using var f = Fonts.Get("Segoe UI", 8.5f, FontStyle.Bold);
         using var tb = new SolidBrush(Gfx.Accent);
         g.DrawString("MIC  " + m.Cab.MicPos.Display + " · " + m.Cab.Distance.Display, f, tb, new RectangleF(slot.X, box.Bottom + 40, slot.Width, 20), Gfx.Center);
     }
@@ -212,10 +212,10 @@ sealed class CabPage : WidgetSurface
     {
         var r = View;
         using (var bg = new SolidBrush(Slate)) g.FillRectangle(bg, r);
-        using (var tf = new Font("Segoe UI Semibold", 15f))
+        using (var tf = Fonts.Get("Segoe UI Semibold", 15f))
         using (var tb = new SolidBrush(Color.FromArgb(240, 242, 245)))
             g.DrawString("CABINET", tf, tb, 30, 20, Gfx.Typo);
-        using (var sf0 = new Font("Segoe UI", 9f))
+        using (var sf0 = Fonts.Get("Segoe UI", 9f))
         using (var sb = new SolidBrush(Color.FromArgb(150, 205, 210, 220)))
             g.DrawString("Speaker model, mic and room — drag the mic across the speaker (dust cap to cone), or load your own IR", sf0, sb, 33, 52, Gfx.Typo);
 
@@ -238,14 +238,14 @@ sealed class CabPage : WidgetSurface
             g.FillPath(pb, pp);
             using var pen = new Pen(Color.FromArgb(90, Gfx.Accent), 1); g.DrawPath(pen, pp);
         }
-        using var tf2 = new Font("Segoe UI", 14f, FontStyle.Bold);
+        using var tf2 = Fonts.Get("Segoe UI", 14f, FontStyle.Bold);
         using var gold = new SolidBrush(Gfx.Accent);
         g.DrawString("CABINET", tf2, gold, panel.X + 18, panel.Y + 20, Gfx.Typo);
-        using var sf = new Font("Segoe UI", 8f, FontStyle.Bold);
+        using var sf = Fonts.Get("Segoe UI", 8f, FontStyle.Bold);
         using var dim = new SolidBrush(Gfx.Dim);
         g.DrawString("SPEAKER MODEL", sf, dim, panel.X + 22, panel.Y + 64, Gfx.Typo);
         g.DrawString("MICROPHONE — drag the mic across the speaker", sf, dim, panel.X + 22, panel.Y + 226, Gfx.Typo);
-        using var lf = new Font("Arial", 7.5f, FontStyle.Bold);
+        using var lf = Fonts.Get("Arial", 7.5f, FontStyle.Bold);
         using var lb = new SolidBrush(Gfx.Text);
         foreach (var w in W)
             if (w is KnobWidget k)

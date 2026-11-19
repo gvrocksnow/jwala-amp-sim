@@ -12,9 +12,9 @@ static class Theme
 {
     public static readonly Color Back = Color.FromArgb(22, 22, 25), Field = Color.FromArgb(37, 37, 40), Text = Color.FromArgb(235, 225, 205), Accent = Color.FromArgb(228, 230, 236);
 
-    public static Label Label(string t, bool gold = false) => new() { Text = t, AutoSize = true, ForeColor = gold ? Accent : Text, Font = new Font("Segoe UI", 9f, gold ? FontStyle.Bold : FontStyle.Regular), Margin = new Padding(3, 8, 3, 3) };
-    public static ComboBox Combo() => new() { Width = 330, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Field, ForeColor = Text, Font = new Font("Segoe UI", 9f) };
-    public static Button Button(string t) => new() { Text = t, AutoSize = true, FlatStyle = FlatStyle.Flat, BackColor = Field, ForeColor = Text, Font = new Font("Segoe UI", 9f), Padding = new Padding(6, 2, 6, 2), FlatAppearance = { BorderColor = Color.FromArgb(79, 79, 82) } };
+    public static Label Label(string t, bool gold = false) => new() { Text = t, AutoSize = true, ForeColor = gold ? Accent : Text, Font = Fonts.Get("Segoe UI", 9f, gold ? FontStyle.Bold : FontStyle.Regular), Margin = new Padding(3, 8, 3, 3) };
+    public static ComboBox Combo() => new() { Width = 330, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Field, ForeColor = Text, Font = Fonts.Get("Segoe UI", 9f) };
+    public static Button Button(string t) => new() { Text = t, AutoSize = true, FlatStyle = FlatStyle.Flat, BackColor = Field, ForeColor = Text, Font = Fonts.Get("Segoe UI", 9f), Padding = new Padding(6, 2, 6, 2), FlatAppearance = { BorderColor = Color.FromArgb(79, 79, 82) } };
 
     /// <summary>Dark colours for context menus.</summary>
     public sealed class MenuColors : ProfessionalColorTable
@@ -162,7 +162,7 @@ sealed class SettingsForm : Form
 /// <summary>Tiny "name your preset" prompt.</summary>
 sealed class NameDialog : Form
 {
-    readonly TextBox box = new() { Width = 280, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10f) };
+    readonly TextBox box = new() { Width = 280, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle, Font = Fonts.Get("Segoe UI", 10f) };
     public string Value => box.Text.Trim();
     public NameDialog(string title, string initial)
     {

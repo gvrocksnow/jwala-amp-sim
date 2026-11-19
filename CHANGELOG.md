@@ -5,8 +5,8 @@ All notable changes to Jwala are recorded here, newest first.
 ## [Unreleased]
 
 ### Changed
-- **Fonts (Rust):** the UI's fonts are now built into the app, so text looks the same on Windows, macOS and Linux instead of depending on what each system has installed. Segoe UI is replaced by Selawik (its open, same-width substitute), Arial Bold by Arimo Bold, and the symbol font by DejaVu Sans. Pedal names and other text sized to the line height match the old Segoe UI layout.
-- **Logo (Rust):** the "Jwala" title in the header and on the splash is now an image rendered from Segoe Script Bold, so it keeps its original look everywhere.
+- **Fonts (Rust and C#):** the UI's fonts are now built into the app, so text looks the same on Windows, macOS and Linux instead of depending on what each system has installed. Segoe UI is replaced by Selawik (its open, same-width substitute), Arial Bold by Arimo Bold, and the symbol font by DejaVu Sans. Pedal names and other text sized to the line height match the old Segoe UI layout.
+- **Logo (Rust and C#):** the "Jwala" title in the header and on the splash is now an image rendered from Segoe Script Bold, so it keeps its original look everywhere.
 
 ## [0.3.2] - 2026-11-18
 

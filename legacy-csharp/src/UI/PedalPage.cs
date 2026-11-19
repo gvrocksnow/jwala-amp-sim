@@ -139,10 +139,10 @@ sealed class PedalPage : WidgetSurface
         // the concept's flat slate panel
         using (var bg = new SolidBrush(Slate)) g.FillRectangle(bg, r);
 
-        using (var tf = new Font("Segoe UI Semibold", 15f))
+        using (var tf = Fonts.Get("Segoe UI Semibold", 15f))
         using (var tb = new SolidBrush(Color.FromArgb(240, 242, 245)))
             g.DrawString(title, tf, tb, 30, 20, Gfx.Typo);
-        using (var sf = new Font("Segoe UI", 9f))
+        using (var sf = Fonts.Get("Segoe UI", 9f))
         using (var sb = new SolidBrush(Color.FromArgb(150, 205, 210, 220)))
             g.DrawString(subtitle, sf, sb, 33, 52, Gfx.Typo);
 
@@ -182,10 +182,10 @@ sealed class PedalPage : WidgetSurface
             slots[i] = Math.Min(left, right) * 0.92f;
         }
         float cs = Math.Clamp(r.Width / 80f, 11f, 22f);
-        using (var probe = new Font("Segoe UI", 20f, FontStyle.Bold))
+        using (var probe = Fonts.Get("Segoe UI", 20f, FontStyle.Bold))
             for (int i = 0; i < fx.Length; i++)
                 cs = Math.Min(cs, 20f * slots[i] / g.MeasureString(StyleOf(fx[i]).Caption, probe, PointF.Empty, Gfx.Typo).Width);
-        using var cf = new Font("Segoe UI", Math.Max(6f, cs), FontStyle.Bold);
+        using var cf = Fonts.Get("Segoe UI", Math.Max(6f, cs), FontStyle.Bold);
         for (int i = 0; i < fx.Length; i++)
         {
             var e = fx[i]; var b = bodies[i];
@@ -228,8 +228,8 @@ sealed class PedalPage : WidgetSurface
         float kf = Math.Max(5.6f, 6.75f * s);
         float ks = KnobSize(b);
         // drawn at 80% size but letter-spaced out to the width the label has at full size
-        using (var full = new Font("Segoe UI Semibold", kf))
-        using (var f = new Font("Segoe UI Semibold", kf * 0.8f))
+        using (var full = Fonts.Get("Segoe UI Semibold", kf))
+        using (var f = Fonts.Get("Segoe UI Semibold", kf * 0.8f))
             for (int k = 0; k < e.Params.Length; k++)
             {
                 var c = KnobCenter(e, b, k);
@@ -247,19 +247,19 @@ sealed class PedalPage : WidgetSurface
         var weights = words.Length == 2 ? new[] { FontStyle.Regular, FontStyle.Bold } : new[] { FontStyle.Bold };
         float nf = NameSize(g, b);
         for (int i = 0; i < words.Length; i++)
-            using (var probe = new Font("Segoe UI", 20f, weights[i]))
+            using (var probe = Fonts.Get("Segoe UI", 20f, weights[i]))
                 nf = Math.Min(nf, 20f * nameR.Width / g.MeasureString(words[i], probe, PointF.Empty, Gfx.Typo).Width);
         nf = Math.Max(8, nf);
         float lh = 0;
-        using (var probe = new Font("Segoe UI", nf, FontStyle.Bold)) lh = probe.GetHeight(g) * 0.9f;
+        using (var probe = Fonts.Get("Segoe UI", nf, FontStyle.Bold)) lh = probe.GetHeight(g) * 0.9f;
         float ny = nameR.Y + (nameR.Height - lh * words.Length) / 2;
         for (int i = 0; i < words.Length; i++, ny += lh)
-            using (var f = new Font("Segoe UI", nf, weights[i]))
+            using (var f = Fonts.Get("Segoe UI", nf, weights[i]))
                 g.DrawString(words[i], f, ink, new RectangleF(b.X, ny, b.Width, lh), Gfx.CenterNoWrap);
 
         if (e.HasTap)
         {
-            using var f = new Font("Segoe UI", lf, FontStyle.Bold);
+            using var f = Fonts.Get("Segoe UI", lf, FontStyle.Bold);
             float ly = b.Y + b.Height * 0.615f;
             g.DrawString("ON", f, ink, new RectangleF(b.X + b.Width * 0.3f + 10 * s, ly - lf, 60, lf * 2), Gfx.Format(StringAlignment.Near, StringAlignment.Center, false));
             g.DrawString("TAP", f, ink, new RectangleF(b.X + b.Width * 0.7f + 10 * s, ly - lf, 60, lf * 2), Gfx.Format(StringAlignment.Near, StringAlignment.Center, false));
@@ -273,10 +273,10 @@ sealed class PedalPage : WidgetSurface
         float s = b.Height / 360f;
         float nameW = Unit(b) * 0.84f, nameH = b.Height * 0.155f;
         float lhUnit;
-        using (var unit = new Font("Segoe UI", 1f, FontStyle.Bold)) lhUnit = unit.GetHeight(g);
+        using (var unit = Fonts.Get("Segoe UI", 1f, FontStyle.Bold)) lhUnit = unit.GetHeight(g);
         float nf = Math.Min(28f * s, nameH / (2 * lhUnit * 0.9f));
         foreach (var (word, style) in new[] { ("GREEN", FontStyle.Regular), ("DRIVE", FontStyle.Bold) })
-            using (var probe = new Font("Segoe UI", 20f, style))
+            using (var probe = Fonts.Get("Segoe UI", 20f, style))
                 nf = Math.Min(nf, 20f * nameW / g.MeasureString(word, probe, PointF.Empty, Gfx.Typo).Width);
         return nf;
     }

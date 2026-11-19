@@ -53,7 +53,7 @@ sealed class TunerPanel : WidgetSurface
             Bounds = R(Cx - 110, ButtonsY, 160, 32), Hit = RectangleF.Empty,
             OnPaint = (g, b, _, _) =>
             {
-                using var f = new Font("Segoe UI", 10f * s, FontStyle.Bold);
+                using var f = Fonts.Get("Segoe UI", 10f * s, FontStyle.Bold);
                 using var tb = new SolidBrush(Gfx.Text);
                 g.DrawString($"A4 = {t.ReferenceA:0} Hz", f, tb, b, Gfx.Center);
             },
@@ -67,10 +67,10 @@ sealed class TunerPanel : WidgetSurface
     {
         var r = View;
         using (var bg = new SolidBrush(Color.FromArgb(9, 9, 9))) g.FillRectangle(bg, r);
-        using var hf = new Font("Segoe UI", 15f, FontStyle.Bold);
+        using var hf = Fonts.Get("Segoe UI", 15f, FontStyle.Bold);
         using var title = new SolidBrush(Color.FromArgb(220, Gfx.Accent));
         g.DrawString("TUNER", hf, title, 28, 18, Gfx.Typo);
-        using var sf = new Font("Segoe UI", 9f);
+        using var sf = Fonts.Get("Segoe UI", 9f);
         using var dim = new SolidBrush(Color.FromArgb(160, 230, 220, 200));
         g.DrawString("Play a single string and let it ring.  T or Esc closes the tuner.", sf, dim, 31, 48, Gfx.Typo);
 
@@ -206,7 +206,7 @@ sealed class TunerPanel : WidgetSurface
         if (masks.TryGetValue((text, rows), out var m)) return m;
         if (masks.Count > 400) masks.Clear();
         float px = rows * 1.32f;
-        using var f = new Font("Arial", px, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var f = Fonts.Get("Arial", px, FontStyle.Bold, GraphicsUnit.Pixel);
         float ascent = px * f.FontFamily.GetCellAscent(FontStyle.Bold) / f.FontFamily.GetEmHeight(FontStyle.Bold);
         int baseRow = (int)MathF.Ceiling(ascent) + 2;
         int cw, ch = (int)MathF.Ceiling(px * 1.4f) + 6;

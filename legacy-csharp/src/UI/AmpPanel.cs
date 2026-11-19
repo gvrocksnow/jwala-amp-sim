@@ -170,10 +170,10 @@ sealed class AmpPanel : WidgetSurface
     {
         var r = View;
         using (var bg = new SolidBrush(Slate)) g.FillRectangle(bg, r);
-        using (var tf = new Font("Segoe UI Semibold", 15f))
+        using (var tf = Fonts.Get("Segoe UI Semibold", 15f))
         using (var tb = new SolidBrush(Color.FromArgb(240, 242, 245)))
             g.DrawString("AMPLIFIER", tf, tb, 30, 20, Gfx.Typo);
-        using (var sf = new Font("Segoe UI", 9f))
+        using (var sf = Fonts.Get("Segoe UI", 9f))
         using (var sb = new SolidBrush(Color.FromArgb(150, 205, 210, 220)))
             g.DrawString("Four tube channels plus an acoustic-guitar simulator — click a channel LED to switch, drag knobs (Shift = fine, double-click = reset)", sf, sb, 33, 52, Gfx.Typo);
 
@@ -207,8 +207,8 @@ sealed class AmpPanel : WidgetSurface
         // printing on the faceplate: labels above the controls, white like the real thing
         float lf = Math.Clamp(head.Width / 150f, 6f, 9.5f);
         float labelY = head.Y + head.Height * RowY - kd * 0.5f - lf * 2.6f;
-        using var font = new Font("Arial", lf, FontStyle.Bold);
-        using var small = new Font("Arial", lf * 0.82f, FontStyle.Bold);
+        using var font = Fonts.Get("Arial", lf, FontStyle.Bold);
+        using var small = Fonts.Get("Arial", lf * 0.82f, FontStyle.Bold);
         using var ink = new SolidBrush(Print);
         void Label(float x, string s) => g.DrawString(s, font, ink, new RectangleF(x - 60, labelY, 120, lf * 2), Gfx.CenterNoWrap);
 

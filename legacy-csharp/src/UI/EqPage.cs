@@ -100,7 +100,7 @@ sealed class EqPage : WidgetSurface
         g.Clip = clip;
         if (!p.Enabled)
         {
-            using var f = new Font("Segoe UI", 8f, FontStyle.Bold);
+            using var f = Fonts.Get("Segoe UI", 8f, FontStyle.Bold);
             using var b = new SolidBrush(Gfx.Dim);
             Gfx.DrawText(g, "BYPASSED", f, b, new RectangleF(scr.Right - 110, scr.Y + 8, 100, 14), 1f);
         }
@@ -110,10 +110,10 @@ sealed class EqPage : WidgetSurface
     {
         var r = View;
         using (var bg = new SolidBrush(Slate)) g.FillRectangle(bg, r);
-        using (var tf = new Font("Segoe UI Semibold", 15f))
+        using (var tf = Fonts.Get("Segoe UI Semibold", 15f))
         using (var tb = new SolidBrush(Color.FromArgb(240, 242, 245)))
             g.DrawString("GRAPHIC EQ", tf, tb, 30, 20, Gfx.Typo);
-        using (var sf0 = new Font("Segoe UI", 9f))
+        using (var sf0 = Fonts.Get("Segoe UI", 9f))
         using (var sb = new SolidBrush(Color.FromArgb(150, 205, 210, 220)))
             g.DrawString("Nine octave bands after the cab, before the post effects — drag a slider (double-click = 0 dB, wheel = fine steps)", sf0, sb, 33, 52, Gfx.Typo);
 
@@ -129,7 +129,7 @@ sealed class EqPage : WidgetSurface
         g.DrawImage(panel, unit);
 
         // the display's grid: log frequency 20 Hz–20 kHz, ±18 dB
-        using var gridFont = new Font("Segoe UI", 6.5f);
+        using var gridFont = Fonts.Get("Segoe UI", 6.5f);
         using var gridText = new SolidBrush(Color.FromArgb(60, 255, 255, 255));
         foreach (int d in new[] { -12, -6, 0, 6, 12 })
         {
@@ -146,11 +146,11 @@ sealed class EqPage : WidgetSurface
             }
 
         // the sliders' dB scale, ticks, slots and names
-        using var scaleFont = new Font("Arial", 6.5f, FontStyle.Bold);
+        using var scaleFont = Fonts.Get("Arial", 6.5f, FontStyle.Bold);
         using var dim = new SolidBrush(Gfx.Dim);
         foreach (int d in new[] { -12, -6, 0, 6, 12 })
             Gfx.DrawText(g, d == 0 ? "0 dB" : d.ToString("+0;-0"), scaleFont, dim, new RectangleF(left - 46, Ty(0.5f + d / (2f * (float)EqParams.RangeDb)) - 6, 38, 12), 1);
-        using var nameFont = new Font("Arial", 7f, FontStyle.Bold);
+        using var nameFont = Fonts.Get("Arial", 7f, FontStyle.Bold);
         using var gold = new SolidBrush(Gfx.Accent);
         for (int i = 0; i < p.Knobs.Length; i++)
         {
@@ -249,7 +249,7 @@ sealed class FaderWidget : Widget
         if (hot || pressed)
             using (var ul = Gfx.Round(new RectangleF(cx - tw / 2 + 6, cap.Bottom + 1, tw - 12, 2), 1))
             using (var ub = new SolidBrush(Gfx.Accent)) g.FillPath(ub, ul);
-        using var f = new Font("Segoe UI", 7.5f, FontStyle.Bold);
+        using var f = Fonts.Get("Segoe UI", 7.5f, FontStyle.Bold);
         using var tb = new SolidBrush(hot || pressed ? Gfx.Accent : Gfx.Text);
         Gfx.DrawText(g, P.Display, f, tb, new RectangleF(cx - sw / 2, vy, sw, 14));
     }
