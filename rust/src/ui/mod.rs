@@ -144,9 +144,9 @@ pub enum Hit {
 pub enum Field {
     AsioDriver,
     AsioInput,
-    WasapiIn,
-    WasapiChannel,
-    WasapiOut,
+    DeviceIn,
+    DeviceChannel,
+    DeviceOut,
 }
 
 /// The standalone's audio host and its settings page state.
@@ -591,7 +591,7 @@ impl App {
         }
         self.dirty = false;
         // power is on by default: start audio with the last device
-        let settings = saved.audio.unwrap_or_else(crate::standalone::AudioSettings::first_run);
+        let settings = saved.audio.map(crate::standalone::AudioSettings::for_this_os).unwrap_or_else(crate::standalone::AudioSettings::first_run);
         self.audio = Some(Audio {
             host: Default::default(),
             settings,
@@ -734,9 +734,11 @@ impl App {
                     a.asio_inputs = a.host.asio_inputs(&p.asio_driver);
                 }
             }
-            Field::AsioInput | Field::WasapiChannel => {
+            Field::AsioInput | Field::DeviceChannel => {
                 let count = if f == Field::AsioInput {
                     a.asio_inputs.len()
+                } else if p.driver == crate::standalone::Driver::Jack {
+                    2 // cpal's JACK client has two input ports
                 } else {
                     a.devices.inputs.iter().find(|(n, _)| *n == p.input_device).or(a.devices.inputs.first()).map(|(_, c)| *c).unwrap_or(2)
                 };
@@ -744,14 +746,14 @@ impl App {
                     p.input_channel = (p.input_channel as i32 + dir as i32).rem_euclid(count as i32) as usize;
                 }
             }
-            Field::WasapiIn => {
+            Field::DeviceIn => {
                 let names: Vec<String> = a.devices.inputs.iter().map(|(n, _)| n.clone()).collect();
                 if let Some(n) = step(&names, &p.input_device, dir) {
                     p.input_device = n;
                     p.input_channel = 0;
                 }
             }
-            Field::WasapiOut => {
+            Field::DeviceOut => {
                 if let Some(n) = step(&a.devices.outputs, &p.output_device, dir) {
                     p.output_device = n;
                 }
@@ -927,7 +929,7 @@ impl App {
             Hit::Gear => self.open_settings(),
             Hit::SetDriver(d) => {
                 if let Some(p) = self.audio.as_mut().and_then(|a| a.pending.as_mut()) {
-                    p.driver = [crate::standalone::Driver::Asio, crate::standalone::Driver::Wasapi, crate::standalone::Driver::DiFile][d as usize];
+                    p.driver = crate::standalone::Driver::AVAILABLE[d as usize];
                     p.input_channel = 0;
                 }
             }

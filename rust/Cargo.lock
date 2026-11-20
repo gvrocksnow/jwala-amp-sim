@@ -608,6 +608,7 @@ dependencies = [
  "core-foundation-sys",
  "coreaudio-rs",
  "dasp_sample",
+ "jack",
  "jni",
  "js-sys",
  "libc",

@@ -1529,15 +1529,12 @@ fn audio_settings(app: &mut App, p: &mut Painter, w: f32, h: f32) {
 
     let mut y = r.y + 64.0;
     p.text_in(Font::Bold, 8.0, "DRIVER", Rect::new(r.x + 24.0, y, 150.0, 32.0), 0.0, 0.5, DIM);
-    let names = ["ASIO", "WASAPI", "DI FILE"];
-    let cur = match pend.driver {
-        Driver::Asio => 0,
-        Driver::Wasapi => 1,
-        Driver::DiFile => 2,
-    };
-    let bw = (r.right() - 24.0 - (r.x + 170.0) - 16.0) / 3.0;
-    for (i, n) in names.iter().enumerate() {
-        button(app, p, Rect::new(r.x + 170.0 + i as f32 * (bw + 8.0), y, bw, 32.0), n, Hit::SetDriver(i as u8), cur == i, 8.5);
+    let drivers = Driver::AVAILABLE;
+    let cur = drivers.iter().position(|d| *d == pend.driver);
+    let n = drivers.len() as f32;
+    let bw = (r.right() - 24.0 - (r.x + 170.0) - 8.0 * (n - 1.0)) / n;
+    for (i, d) in drivers.iter().enumerate() {
+        button(app, p, Rect::new(r.x + 170.0 + i as f32 * (bw + 8.0), y, bw, 32.0), d.label(), Hit::SetDriver(i as u8), cur == Some(i), 8.5);
     }
     y += 52.0;
 
@@ -1562,15 +1559,23 @@ fn audio_settings(app: &mut App, p: &mut Painter, w: f32, h: f32) {
                 "Apply to start this driver; its control panel (buffer size, sample rate) opens once it is running."
             };
         }
-        Driver::Wasapi => {
+        Driver::Wasapi | Driver::CoreAudio | Driver::Alsa => {
             let inp = if pend.input_device.is_empty() { "Default input".to_string() } else { pend.input_device.clone() };
-            selector(app, p, "INPUT DEVICE", &inp, y, r, Field::WasapiIn);
+            selector(app, p, "INPUT DEVICE", &inp, y, r, Field::DeviceIn);
             y += 44.0;
-            selector(app, p, "INPUT CHANNEL", &format!("Input {}", pend.input_channel + 1), y, r, Field::WasapiChannel);
+            selector(app, p, "INPUT CHANNEL", &format!("Input {}", pend.input_channel + 1), y, r, Field::DeviceChannel);
             y += 44.0;
             let out = if pend.output_device.is_empty() { "Default output".to_string() } else { pend.output_device.clone() };
-            selector(app, p, "OUTPUT DEVICE", &out, y, r, Field::WasapiOut);
-            hint = "Windows shared mode: input and output must run at the same sample rate. ASIO gives much lower latency if your interface has a driver.";
+            selector(app, p, "OUTPUT DEVICE", &out, y, r, Field::DeviceOut);
+            hint = match pend.driver {
+                Driver::CoreAudio => "Set your interface's sample rate in Audio MIDI Setup: input and output must run at the same rate. Use the same interface for both for the lowest latency.",
+                Driver::Alsa => "Pick your interface's own (hw) device for both for the lowest latency. JACK, or PipeWire's JACK support, shares the interface with other apps.",
+                _ => "Windows shared mode: input and output must run at the same sample rate. ASIO gives much lower latency if your interface has a driver.",
+            };
+        }
+        Driver::Jack => {
+            selector(app, p, "INPUT CHANNEL", &format!("Input {}", pend.input_channel + 1), y, r, Field::DeviceChannel);
+            hint = "Joins the JACK graph (PipeWire's JACK support works too) and connects to the system ports. Buffer size and sample rate come from the JACK server.";
         }
         Driver::DiFile => {
             p.text_in(Font::Bold, 8.0, "DI RECORDING", Rect::new(r.x + 24.0, y, 150.0, 32.0), 0.0, 0.5, DIM);
@@ -1583,7 +1588,7 @@ fn audio_settings(app: &mut App, p: &mut Painter, w: f32, h: f32) {
             p.text_fit(Font::Regular, 9.0, &name, Rect::new(r.x + 290.0, y, r.right() - 24.0 - (r.x + 290.0), 32.0), 0.0, TEXT);
             y += 44.0;
             let out = if pend.output_device.is_empty() { "Default output".to_string() } else { pend.output_device.clone() };
-            selector(app, p, "OUTPUT DEVICE", &out, y, r, Field::WasapiOut);
+            selector(app, p, "OUTPUT DEVICE", &out, y, r, Field::DeviceOut);
             hint = "Plays a dry DI recording (.wav) through the rig in a loop: dial in tones without a guitar.";
         }
     }

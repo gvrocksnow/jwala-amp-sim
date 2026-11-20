@@ -55,6 +55,11 @@ x11 = { version = "2.21", features = ["xlib"] }
 # the system one breaks on half of them ("libssl.so...: cannot open shared object file")
 native-tls = { version = "0.2", features = ["vendored"] }
 
+# the standalone's JACK driver (also PipeWire through pipewire-jack). cpal's jack crate loads
+# libjack at run time, so the binary still starts on systems without JACK
+[target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
+cpal = { version = "0.15", features = ["jack"] }
+
 [build-dependencies]
 winresource = "0.1"
 

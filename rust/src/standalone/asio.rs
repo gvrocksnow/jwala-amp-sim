@@ -1,6 +1,7 @@
 //! Minimal ASIO host. ASIO drivers are COM objects registered under HKLM\SOFTWARE\ASIO; we talk to
 //! them through the IASIO vtable directly (the same interface the ASIO SDK wraps), on one thread
 //! that owns the driver for its whole life. The driver calls `buffer_switch` on its own thread.
+//! Windows-only (the module is compiled only there).
 
 #![allow(non_snake_case)]
 
@@ -82,29 +83,12 @@ struct Iasio {
     vtbl: *const Vtbl,
 }
 
-#[cfg(windows)]
 #[link(name = "ole32")]
 extern "system" {
     fn CoInitializeEx(reserved: *mut c_void, coinit: u32) -> i32;
     fn CoUninitialize();
     fn CoCreateInstance(clsid: *const Guid, outer: *mut c_void, ctx: u32, iid: *const Guid, out: *mut *mut c_void) -> i32;
     fn CLSIDFromString(s: *const u16, clsid: *mut Guid) -> i32;
-}
-
-// ASIO is Windows-only: elsewhere `drivers()` finds nothing, so these are never reached
-#[cfg(not(windows))]
-unsafe fn CoInitializeEx(_reserved: *mut c_void, _coinit: u32) -> i32 {
-    0
-}
-#[cfg(not(windows))]
-unsafe fn CoUninitialize() {}
-#[cfg(not(windows))]
-unsafe fn CoCreateInstance(_clsid: *const Guid, _outer: *mut c_void, _ctx: u32, _iid: *const Guid, _out: *mut *mut c_void) -> i32 {
-    -1
-}
-#[cfg(not(windows))]
-unsafe fn CLSIDFromString(_s: *const u16, _clsid: *mut Guid) -> i32 {
-    -1
 }
 
 /// An installed ASIO driver.
@@ -115,13 +99,6 @@ pub struct DriverEntry {
 }
 
 /// Drivers registered under HKLM\SOFTWARE\ASIO.
-#[cfg(not(windows))]
-pub fn drivers() -> Vec<DriverEntry> {
-    Vec::new()
-}
-
-/// Drivers registered under HKLM\SOFTWARE\ASIO.
-#[cfg(windows)]
 pub fn drivers() -> Vec<DriverEntry> {
     let Ok(asio) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE).open_subkey("SOFTWARE\\ASIO") else { return Vec::new() };
     let mut v: Vec<DriverEntry> = asio

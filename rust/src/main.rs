@@ -50,7 +50,8 @@ fn main() {
         std::process::exit(if problems.is_empty() { 0 } else { 1 });
     }
 
-    // the app runs its own audio host (ASIO / WASAPI / DI file, chosen in ⚙ Settings);
+    // the app runs its own audio host (ASIO / WASAPI, Core Audio, ALSA / JACK or a DI file, chosen
+    // in ⚙ Settings);
     // nih-plug's wrapper only provides the window and parameters, on its silent dummy backend
     if has(&args, "--no-audio") {
         jwala_plugin::NO_AUDIO.store(true, Ordering::Relaxed);
@@ -76,15 +77,17 @@ fn main() {
     nih_plug::wrapper::standalone::nih_export_standalone_with_args::<jwala_plugin::Jwala, _>(args);
 }
 
-/// `--audio-test asio "<driver>" [input]` / `--audio-test wasapi` / `--audio-test list`:
+/// `--audio-test asio "<driver>" [input]` / `--audio-test wasapi|coreaudio|alsa|jack [input]` /
+/// `--audio-test list`:
 /// starts the device with the output muted for two seconds and reports what happened.
 fn audio_test(args: &[String]) -> i32 {
     use jwala_plugin::standalone::{devices, AudioHost, AudioSettings, Driver};
     let d = devices();
     if args[0] == "list" {
         println!("ASIO drivers: {:?}", d.asio);
-        println!("WASAPI inputs: {:?}", d.inputs);
-        println!("WASAPI outputs: {:?}", d.outputs);
+        println!("drivers: {:?}", Driver::AVAILABLE);
+        println!("inputs: {:?}", d.inputs);
+        println!("outputs: {:?}", d.outputs);
         return 0;
     }
     let plugin = jwala_plugin::Jwala::default();
@@ -94,7 +97,14 @@ fn audio_test(args: &[String]) -> i32 {
     shared.tuner.mute_output.store(true, Ordering::Relaxed);
     let s = match args[0].as_str() {
         "asio" => AudioSettings { driver: Driver::Asio, asio_driver: args.get(1).cloned().unwrap_or_default(), input_channel: args.get(2).and_then(|v| v.parse().ok()).unwrap_or(0), ..Default::default() },
-        _ => AudioSettings { driver: Driver::Wasapi, ..Default::default() },
+        name => {
+            let id = |d: &Driver| d.label().to_lowercase().replace(' ', "");
+            let Some(&driver) = Driver::AVAILABLE.iter().find(|d| id(d) == name) else {
+                println!("unknown driver \"{name}\"; this build has {:?}", Driver::AVAILABLE);
+                return 1;
+            };
+            AudioSettings { driver, input_channel: args.get(1).and_then(|v| v.parse().ok()).unwrap_or(0), ..Default::default() }
+        }
     };
     let mut host = AudioHost::default();
     if s.driver == Driver::Asio {

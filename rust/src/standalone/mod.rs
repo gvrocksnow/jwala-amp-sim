@@ -1,7 +1,8 @@
-//! The standalone app's own audio host: ASIO, WASAPI (through cpal) or a DI recording played
-//! through the rig. nih-plug's standalone wrapper still provides the window and parameters (on its
+//! The standalone app's own audio host: ASIO or WASAPI on Windows, Core Audio on macOS, ALSA or
+//! JACK on Linux (all but ASIO through cpal), or a DI recording played through the rig. nih-plug's standalone wrapper still provides the window and parameters (on its
 //! silent dummy backend); audio runs here, through the same `Engine` the plugin uses.
 
+#[cfg(windows)]
 pub mod asio;
 pub mod update;
 
@@ -15,12 +16,53 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+/// Every driver any build knows, so saved settings parse on all of them; `Driver::AVAILABLE` lists
+/// the ones this OS offers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub enum Driver {
-    #[default]
+    #[cfg_attr(windows, default)]
     Asio,
     Wasapi,
+    #[cfg_attr(target_os = "macos", default)]
+    CoreAudio,
+    #[cfg_attr(not(any(windows, target_os = "macos")), default)]
+    Alsa,
+    Jack,
     DiFile,
+}
+
+impl Driver {
+    #[cfg(windows)]
+    pub const AVAILABLE: &'static [Driver] = &[Driver::Asio, Driver::Wasapi, Driver::DiFile];
+    #[cfg(target_os = "macos")]
+    pub const AVAILABLE: &'static [Driver] = &[Driver::CoreAudio, Driver::DiFile];
+    #[cfg(not(any(windows, target_os = "macos")))]
+    pub const AVAILABLE: &'static [Driver] = &[Driver::Alsa, Driver::Jack, Driver::DiFile];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Driver::Asio => "ASIO",
+            Driver::Wasapi => "WASAPI",
+            Driver::CoreAudio => "CORE AUDIO",
+            Driver::Alsa => "ALSA",
+            Driver::Jack => "JACK",
+            Driver::DiFile => "DI FILE",
+        }
+    }
+
+    /// The cpal host behind a live-input driver.
+    fn cpal_host(self) -> Result<cpal::Host, String> {
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let id = if self == Driver::Jack { cpal::HostId::Jack } else { cpal::HostId::Alsa };
+            cpal::host_from_id(id).map_err(|_| format!("{} isn't available on this system", self.label()))
+        }
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            let _ = self;
+            Ok(cpal::default_host())
+        }
+    }
 }
 
 /// Audio device configuration, saved with the standalone's state.
@@ -36,8 +78,24 @@ pub struct AudioSettings {
 }
 
 impl AudioSettings {
-    /// First run: ASIO if a driver is installed (preferring one that matches the default recording
-    /// device, e.g. "Focusrite"), otherwise WASAPI.
+    /// Saved settings from another OS fall back to this OS's first-run choice (keeping the DI file).
+    pub fn for_this_os(self) -> AudioSettings {
+        if Driver::AVAILABLE.contains(&self.driver) {
+            self
+        } else {
+            AudioSettings { di_file: self.di_file, ..AudioSettings::first_run() }
+        }
+    }
+
+    /// First run on macOS / Linux: the OS's standard driver (Core Audio / ALSA).
+    #[cfg(not(windows))]
+    pub fn first_run() -> AudioSettings {
+        AudioSettings::default()
+    }
+
+    /// First run on Windows: ASIO if a driver is installed (preferring one that matches the default
+    /// recording device, e.g. "Focusrite"), otherwise WASAPI.
+    #[cfg(windows)]
     pub fn first_run() -> AudioSettings {
         let drivers = asio::drivers();
         if drivers.is_empty() {
@@ -63,7 +121,7 @@ impl AudioSettings {
 #[derive(Default, Clone)]
 pub struct Devices {
     pub asio: Vec<String>,
-    /// WASAPI inputs with their channel counts.
+    /// Inputs of the OS's standard cpal host (WASAPI / Core Audio / ALSA) with their channel counts.
     pub inputs: Vec<(String, usize)>,
     pub outputs: Vec<String>,
 }
@@ -75,7 +133,11 @@ pub fn devices() -> Devices {
         .map(|it| it.filter_map(|d| Some((d.name().ok()?, d.default_input_config().map(|c| c.channels() as usize).unwrap_or(2)))).collect())
         .unwrap_or_default();
     let outputs = host.output_devices().map(|it| it.filter_map(|d| d.name().ok()).collect()).unwrap_or_default();
-    Devices { asio: asio::drivers().into_iter().map(|d| d.name).collect(), inputs, outputs }
+    #[cfg(windows)]
+    let asio = asio::drivers().into_iter().map(|d| d.name).collect();
+    #[cfg(not(windows))]
+    let asio = Vec::new();
+    Devices { asio, inputs, outputs }
 }
 
 enum Cmd {
@@ -124,10 +186,14 @@ impl AudioHost {
         let join = std::thread::Builder::new()
             .name("jwala audio".into())
             .spawn(move || {
+                #[cfg(not(windows))]
+                let _ = &asio_inputs;
                 let r = match s.driver {
+                    #[cfg(windows)]
                     Driver::Asio => run_asio(&s, params, shared, rx, &done_tx, &running, &asio_inputs),
-                    Driver::Wasapi => run_wasapi(&s, params, shared, rx, &done_tx, &running),
                     Driver::DiFile => run_file(&s, params, shared, rx, &done_tx, &running),
+                    d if Driver::AVAILABLE.contains(&d) => run_cpal(&s, params, shared, rx, &done_tx, &running),
+                    d => Err(format!("{} isn't available on this OS — open ⚙ Settings", d.label())),
                 };
                 running.store(false, Ordering::Relaxed);
                 if let Err(e) = r {
@@ -174,7 +240,13 @@ impl AudioHost {
         }
     }
 
+    #[cfg(not(windows))]
+    pub fn asio_inputs(&self, _name: &str) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Input channel names for an ASIO driver (from the running driver, or by loading it briefly).
+    #[cfg(windows)]
     pub fn asio_inputs(&self, name: &str) -> Vec<String> {
         {
             let cached = self.asio_inputs.lock().unwrap();
@@ -222,6 +294,7 @@ fn engine_fn(params: &Arc<TubeParams>, shared: &Arc<Shared>, fs: f64) -> impl Fn
 
 // ------------------------------------------------------------------ ASIO
 
+#[cfg(windows)]
 fn run_asio(
     s: &AudioSettings,
     params: Arc<TubeParams>,
@@ -265,7 +338,7 @@ fn run_asio(
     Ok(())
 }
 
-// ------------------------------------------------------------------ WASAPI (cpal)
+// ------------------------------------------------------------------ WASAPI / Core Audio / ALSA / JACK (cpal)
 
 /// Single-producer single-consumer sample FIFO between the input and output callbacks.
 struct Fifo {
@@ -360,15 +433,24 @@ fn output_stream(dev: &cpal::Device, mut fill: impl FnMut(&mut [f32], &mut [f32]
     Ok((stream, fs, ch))
 }
 
+/// Where the user sets device sample rates.
+#[cfg(windows)]
+const RATE_SETTINGS: &str = "Windows sound settings";
+#[cfg(target_os = "macos")]
+const RATE_SETTINGS: &str = "Audio MIDI Setup";
+#[cfg(not(any(windows, target_os = "macos")))]
+const RATE_SETTINGS: &str = "your sound server's settings (or pick JACK)";
+
 fn input_stream(dev: &cpal::Device, rate: u32, channel: usize, fifo: Arc<Fifo>) -> Result<cpal::Stream, String> {
-    // the input must run at the output's rate (WASAPI shared mode doesn't resample for us)
+    // the input must run at the output's rate (WASAPI shared mode, Core Audio and ALSA hw devices
+    // don't resample for us)
     let cfg = dev
         .supported_input_configs()
         .map_err(|e| e.to_string())?
         .filter(|c| c.min_sample_rate().0 <= rate && c.max_sample_rate().0 >= rate)
         .max_by_key(|c| (c.sample_format() == cpal::SampleFormat::F32, c.channels()))
         .map(|c| c.with_sample_rate(cpal::SampleRate(rate)))
-        .ok_or_else(|| format!("the input device can't run at {} kHz like the output — set both to the same rate in Windows sound settings", rate as f32 / 1000.0))?;
+        .ok_or_else(|| format!("the input device can't run at {} kHz like the output — set both to the same rate in {RATE_SETTINGS}", rate as f32 / 1000.0))?;
     let fmt = cfg.sample_format();
     let config: cpal::StreamConfig = cfg.into();
     let ch = config.channels as usize;
@@ -398,8 +480,9 @@ fn input_stream(dev: &cpal::Device, rate: u32, channel: usize, fifo: Arc<Fifo>) 
     }
 }
 
-fn run_wasapi(s: &AudioSettings, params: Arc<TubeParams>, shared: Arc<Shared>, rx: Receiver<Cmd>, done: &Sender<Result<String, String>>, running: &AtomicBool) -> Result<(), String> {
-    let host = cpal::default_host();
+/// Live input through cpal: separate input and output streams joined by a FIFO.
+fn run_cpal(s: &AudioSettings, params: Arc<TubeParams>, shared: Arc<Shared>, rx: Receiver<Cmd>, done: &Sender<Result<String, String>>, running: &AtomicBool) -> Result<(), String> {
+    let host = s.driver.cpal_host()?;
     let out_dev = find_device(&host, &s.output_device, false).ok_or("no output device")?;
     let in_dev = find_device(&host, &s.input_device, true).ok_or("no input device")?;
     let fs = out_dev.default_output_config().map_err(|e| e.to_string())?.sample_rate().0;
@@ -423,7 +506,7 @@ fn run_wasapi(s: &AudioSettings, params: Arc<TubeParams>, shared: Arc<Shared>, r
     out.play().map_err(|e| e.to_string())?;
     running.store(true, Ordering::Relaxed);
     let names = (in_dev.name().unwrap_or_default(), out_dev.name().unwrap_or_default());
-    let _ = done.send(Ok(format!("WASAPI · {} → {} · {:.1} kHz", names.0, names.1, fs as f32 / 1000.0)));
+    let _ = done.send(Ok(format!("{} · {} → {} · {:.1} kHz", s.driver.label(), names.0, names.1, fs as f32 / 1000.0)));
     control_loop(&rx, &shared, || true, || {});
     drop(inp);
     drop(out);
