@@ -1,6 +1,6 @@
 # Jwala: Guitar Amp & Effects Rig
 
-Jwala is a guitar amp simulator with a full signal chain: pedals, a tube amp, a speaker cabinet, a graphic EQ and stereo effects. It runs as a **standalone app** (ASIO / WASAPI) or as a **VST3 / CLAP plugin** in your DAW. It's written in Rust and draws its UI on the GPU.
+Jwala is a guitar amp simulator with a full signal chain: pedals, a tube amp, a speaker cabinet, a graphic EQ and stereo effects. It runs as a **standalone app** (ASIO or WASAPI on Windows, Core Audio on macOS, ALSA or JACK on Linux) or as a **VST3 / CLAP plugin** in your DAW. It's written in Rust and draws its UI on the GPU.
 
 > **Fully vibecoded:** every line of Jwala, from the DSP to the GPU UI, was written with Claude Opus 5.5 and Claude Fable 5.2.
 
@@ -108,8 +108,8 @@ Shows the note, a cents needle, a strobe and the nearest standard-tuning string.
 
 ## Getting started (standalone)
 
-1. Run `Jwala.exe` (macOS: `Jwala.app`, which you can drag to Applications; Linux: `jwala`, or run `./install-linux.sh` once to add it to your app menu with its icon). A splash screen shows while it loads. Audio starts automatically with your last device: ASIO if available, otherwise WASAPI. The status at the top right says why if it can't start.
-2. Open **⚙ Settings** to choose the driver, the input/output device and the input channel. For ASIO, buffer size and sample rate come from the driver's control panel, which you can open from Settings.
+1. Run `Jwala.exe` (macOS: `Jwala.app`, which you can drag to Applications; Linux: `jwala`, or run `./install-linux.sh` once to add it to your app menu with its icon). A splash screen shows while it loads. Audio starts automatically with your last device. On the first run that's ASIO if a driver is installed (otherwise WASAPI) on Windows, Core Audio on macOS and ALSA on Linux. The status at the top right says why if it can't start.
+2. Open **⚙ Settings** to choose the driver, the input/output device and the input channel. For ASIO, buffer size and sample rate come from the driver's control panel, which you can open from Settings. With JACK (PipeWire's JACK support works too), the JACK server sets the buffer size, sample rate and routing, so only the input channel is chosen here. With WASAPI, Core Audio or ALSA, the input and output devices must run at the same sample rate.
 3. No guitar handy? Choose **DI file** in Settings to loop a dry recording (`.wav`) through the rig.
 
 If no usable GPU driver is found, the UI is drawn on the CPU instead and the status reads **CPU rendering (no GPU)**. Everything still works, but the window is drawn at 1x and scaled by Windows.
@@ -118,7 +118,7 @@ Settings and the last state are saved in `%AppData%\Jwala\jwala-rs.json`.
 
 ### Updates
 
-The standalone checks the [releases page](https://github.com/gvrocksnow/jwala-amp-sim/releases/latest) for a newer version. When it finds one, a banner under the header offers **INSTALL**, **SKIP** or **LATER**. The **UPDATES** row in **⚙ Settings** turns **AUTO-UPDATE** on or off and has a **CHECK NOW** button.
+The standalone checks the [releases page](https://github.com/gvrocksnow/jwala-amp-sim/releases/latest) for a newer version. When it finds one, a banner under the header offers **INSTALL**, **SKIP** or **LATER**, and shows a progress bar while the update downloads. The **UPDATES** row in **⚙ Settings** turns **AUTO-UPDATE** on or off and has a **CHECK NOW** button.
 
 The update is checked against the release's `.sha256` file before anything is replaced. Jwala then saves its state, swaps in the new build and restarts. Any VST3/CLAP plugins you've installed are updated too. If they're in a folder that needs admin rights, you'll get a one-time admin prompt. A DAW that already has the plugin loaded keeps the old version until you restart it.
 
@@ -165,7 +165,7 @@ The standalone can render a file through a preset without opening the UI:
 Jwala.exe --render in.wav out.wav "Classic Crunch" amp.GAIN=0.7 ir=my_cab.wav
 ```
 
-`key=value` pairs override preset parameters, and `ir=` sets the USER IR (used with `cab.MODEL=3`). Other dev flags: `--no-audio` (start without opening a device) and `--audio-test list | asio "<driver>" [input] | wasapi`.
+`key=value` pairs override preset parameters, and `ir=` sets the USER IR (used with `cab.MODEL=3`). Other dev flags: `--no-audio` (start without opening a device) and `--audio-test list | asio "<driver>" [input] | wasapi | coreaudio | alsa | jack [input]`.
 
 ## Under the hood
 
