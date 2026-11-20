@@ -4,6 +4,19 @@ All notable changes to Jwala are recorded here, newest first.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-20
+
+### Added
+- **Audio drivers on macOS and Linux (Rust standalone):** ⚙ Settings now offers the drivers each system has. Windows keeps ASIO, WASAPI and DI file; macOS gets Core Audio and DI file; Linux gets ALSA, JACK (PipeWire's JACK support works too) and DI file. Core Audio is the default on macOS and ALSA on Linux. With JACK, the server sets the buffer size, the sample rate and the routing, so its page only shows the input channel. `--audio-test` also accepts `coreaudio`, `alsa` and `jack`.
+- **Download progress (Rust standalone):** while an update downloads, the update button and banner show a percentage and a progress bar.
+
+### Changed
+- **ASIO is Windows-only (Rust):** the ASIO host is no longer compiled on macOS or Linux. Audio settings saved with a driver this system doesn't have fall back to its default driver and keep the DI file.
+- **First start (Rust standalone):** with no saved position, the window opens centred on the primary monitor (Windows and Linux X11).
+
+### Version
+- Bumped to 0.3.4 in `rust/Cargo.toml` and `legacy-csharp/src/Jwala.csproj`.
+
 ## [0.3.3] - 2026-11-19
 
 ### Added
