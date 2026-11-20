@@ -196,7 +196,8 @@ mod win {
             return;
         }
         let wa = info.work;
-        let (x, y) = if saved.is_some() { (x, y) } else { (wa.left + (wa.right - wa.left - w) / 2, wa.top + (wa.bottom - wa.top - h) / 2) };        let fit = |pos: i32, size: i32, lo: i32, hi: i32| if size >= hi - lo { lo } else { pos.clamp(lo, hi - size) };
+        let (x, y) = if saved.is_some() { (x, y) } else { (wa.left + (wa.right - wa.left - w) / 2, wa.top + (wa.bottom - wa.top - h) / 2) };
+        let fit = |pos: i32, size: i32, lo: i32, hi: i32| if size >= hi - lo { lo } else { pos.clamp(lo, hi - size) };
         let (x, y) = (fit(x, w, wa.left, wa.right), fit(y, h, wa.top, wa.bottom));
         if (x, y) == (vis.left, vis.top) {
             return;
